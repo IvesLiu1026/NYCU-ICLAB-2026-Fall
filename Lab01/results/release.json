@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "lab": "NYCU ICLAB 2026 Fall Lab01 OISS",
+  "recommended": "unrolled",
+  "metric": "cell area multiplied by requested period, qualified by STA and timed gate simulation",
+  "tools": {
+    "synthesis": "Synopsys Design Compiler T-2022.03",
+    "simulation": "Synopsys VCS T-2022.06"
+  },
+  "process": "UMC018, 180 nm",
+  "constraints": "Original course combinational constraints; each result uses the stated requested period.",
+  "implementations": {
+    "parameterized": {
+      "file": "rtl/parameterized/OISS.v",
+      "source_sha256": "49021f4eb3a9d1b0989b81b97641e84b918c85dfe3ac0916442443db7b3afb57",
+      "lines": 741,
+      "measurement": {
+        "period_ns": 15.5,
+        "area_um2": 126470.030354,
+        "slack_ns": 0.006074,
+        "timing_met": true,
+        "area_times_period": 1960285.470487,
+        "rtl_passed": 100000,
+        "gate_passed": 100000,
+        "expected_patterns": 100000,
+        "sdf_verified": true,
+        "outcome": "qualified"
+      }
+    },
+    "unrolled": {
+      "file": "rtl/unrolled/OISS.v",
+      "source_sha256": "50178b02593c4fbfbac4a7618ee166fcff0b36bfa99965c664e2473de3dd10b1",
+      "lines": 2821,
+      "measurement": {
+        "period_ns": 15.6,
+        "area_um2": 122610.902388,
+        "slack_ns": 0.00116,
+        "timing_met": true,
+        "area_times_period": 1912730.0772527999,
+        "rtl_passed": 100000,
+        "gate_passed": 100000,
+        "expected_patterns": 100000,
+        "sdf_verified": true,
+        "outcome": "qualified"
+      }
+    }
+  },
+  "reference_measurement": {
+    "period_ns": 40.0,
+    "area_um2": 86816.318565,
+    "slack_ns": 0.00452,
+    "timing_met": true,
+    "area_times_period": 3472652.7425999995,
+    "rtl_passed": 100,
+    "gate_passed": 100,
+    "expected_patterns": 100,
+    "sdf_verified": true,
+    "outcome": "qualified"
+  },
+  "adp_improvement_over_reference_percent": 44.92020311190904,
+  "additional_functional_validation": {
+    "cases_per_implementation_per_simulator": 26093,
+    "new_random_legal_inputs": 20000,
+    "simulators": [
+      "Verilator 5.020",
+      "Icarus Verilog 12.0"
+    ],
+    "both_implementations_passed": true,
+    "scope": "Functional validation, separate from the timed gate measurements."
+  },
+  "scope": "Best measured selected implementations; no global physical optimum or exhaustive hidden-case claim."
+}
