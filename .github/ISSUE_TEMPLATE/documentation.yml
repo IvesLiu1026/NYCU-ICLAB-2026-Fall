@@ -1,0 +1,18 @@
+name: Documentation correction
+description: Report a mistake or unclear explanation in the documentation.
+title: "[Docs] "
+labels: [documentation]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Document and section
+    validations:
+      required: true
+  - type: textarea
+    id: correction
+    attributes:
+      label: Correction or clarification
+      description: Describe the problem and the proposed correction.
+    validations:
+      required: true

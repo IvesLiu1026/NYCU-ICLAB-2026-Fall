@@ -1,0 +1,8 @@
+*.v -text
+*.png -text
+*.gif -text
+*.mp4 -text
+*.md text eol=lf
+*.json text eol=lf
+*.csv text eol=lf
+*.yml text eol=lf

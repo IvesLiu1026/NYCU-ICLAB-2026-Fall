@@ -1,0 +1,27 @@
+name: Reproducible bug
+description: Report incorrect behavior in a published implementation.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: input
+    id: source
+    attributes:
+      label: Lab and source
+      description: Include the source path and commit or SHA256 when available.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Minimal example
+      description: Provide the relevant input and explain why it satisfies the documented input contract.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and observed behavior
+      description: Include the returned order and completion count when relevant.
+    validations:
+      required: true
