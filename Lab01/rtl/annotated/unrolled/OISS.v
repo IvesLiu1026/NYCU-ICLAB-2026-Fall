@@ -1,0 +1,3181 @@
+// OISS - annotated unrolled release
+// Method: bounded-wait threshold DP with shared prefix arithmetic.
+// Selected unrolled implementation: early chain ranks and threshold witness selection.
+// The detailed English comments in this file were written by AI.
+// Executable RTL is copied unchanged from the measured reference below.
+// Removing full-line comments restores the reference byte for byte.
+// Compile only one OISS source at a time.
+//
+// Reading map: decode -> hazards -> groups/ranks -> compaction ->
+// latency prefixes -> two-chain threshold DP / single-chain offsets ->
+// winning witness -> original instruction identifiers.
+// Every block is combinational. A DP state is a set of wires, not a
+// register or a clock cycle. Ex_cycle counts scheduled-program cycles;
+// the physical evaluation period is a separate synthesis constraint.
+// Reference source: rtl/unrolled/OISS.v
+// Reference SHA256: 50178b02593c4fbfbac4a7618ee166fcff0b36bfa99965c664e2473de3dd10b1
+//
+//
+// INTERFACE AND LEGAL DOMAIN
+// Instruction i is Inst_seq_I[12*i +: 12]; its fields, high to low, are
+// opcode, rs, rt and rd. Latency field k belongs to opcode k, not instruction k.
+// Output slot i is Inst_order_O[3*i +: 3], an original instruction ID.
+// The earliest issue is cycle 0, consecutive issues are at least one cycle
+// apart, and every hazard predecessor must finish before its successor issues.
+// This solver relies on the course graph guarantee: no dependencies, one
+// ordered chain plus independent work, or two disjoint ordered chains.
+// It does not solve an arbitrary DAG or unrestricted six-bit latency inputs.
+//
+module OISS(input [95:0] Inst_seq_I, input [47:0] Inst_latency_I,
+            output [23:0] Inst_order_O, output [8:0] Ex_cycle);
+//
+// LEGAL LATENCY WIDTHS
+// ADD/SUB are 1..5, MUL 20..40, DIV 30..50, LOAD/STORE 6..10,
+// BRANCH 2..4 and JUMP 1. Keep only bits needed by these ranges; JUMP
+// is a constant. unused_latency names the intentionally ignored input bits.
+// Truncation is justified by the legal domain, not by arbitrary 6-bit values.
+//
+    wire [18:0] unused_latency = {Inst_latency_I[47:42], Inst_latency_I[41:39], Inst_latency_I[35:34], Inst_latency_I[29:28], Inst_latency_I[11:9], Inst_latency_I[5:3]};
+  wire [5:0] opcode_latency [0:7];
+    assign opcode_latency[0] = {3'd0, Inst_latency_I[0 +: 3]};
+    assign opcode_latency[1] = {3'd0, Inst_latency_I[6 +: 3]};
+    assign opcode_latency[2] = Inst_latency_I[12 +: 6];
+    assign opcode_latency[3] = Inst_latency_I[18 +: 6];
+    assign opcode_latency[4] = {2'd0, Inst_latency_I[24 +: 4]};
+    assign opcode_latency[5] = {2'd0, Inst_latency_I[30 +: 4]};
+    assign opcode_latency[6] = {3'd0, Inst_latency_I[36 +: 3]};
+    assign opcode_latency[7] = 6'd1;
+  wire [2:0] op [0:7], rs [0:7], rt [0:7], rd [0:7];
+  wire swap_groups, other_chain;
+//
+// SHARED OPCODE PRIORITY
+// Larger keys mean longer execution latency. Disjoint legal ranges order
+// MUL/DIV above LOAD/STORE above ADD/SUB/BRANCH above JUMP. Only overlapping
+// ranges need comparisons, shared across all eight instructions. Distinct
+// opcodes may receive a deterministic key order even when latencies tie;
+// either tied order is valid. Repeated equal keys use the rank policy below.
+//
+  wire pr_md = Inst_latency_I[12 +: 6] > Inst_latency_I[18 +: 6];
+  wire pr_ls = Inst_latency_I[24 +: 4] > Inst_latency_I[30 +: 4];
+  wire pr_ab = Inst_latency_I[0 +: 3] > Inst_latency_I[6 +: 3];
+  wire pr_ac = Inst_latency_I[0 +: 3] > Inst_latency_I[36 +: 3];
+  wire pr_bc = Inst_latency_I[6 +: 3] > Inst_latency_I[36 +: 3];
+  wire [1:0] pr_low0 = 2'd1 + {1'b0, pr_ab} + {1'b0, pr_ac};
+  wire [1:0] pr_low1 = 2'd1 + {1'b0, !pr_ab} + {1'b0, pr_bc};
+  wire [1:0] pr_low6 = 2'd1 + {1'b0, !pr_ac} + {1'b0, !pr_bc};
+  wire [2:0] pr_op [0:7];
+  assign pr_op[0] = {1'b0, pr_low0};
+  assign pr_op[1] = {1'b0, pr_low1};
+  assign pr_op[2] = {2'b11, pr_md};
+  assign pr_op[3] = {2'b11, !pr_md};
+  assign pr_op[4] = {2'b10, pr_ls};
+  assign pr_op[5] = {2'b10, !pr_ls};
+  assign pr_op[6] = {1'b0, pr_low6};
+  assign pr_op[7] = 3'd0;
+  wire [2:0] sort_key [0:7];
+  assign sort_key[0] = ({3{op[0] == 3'd0}} & pr_op[0]) | ({3{op[0] == 3'd1}} & pr_op[1]) | ({3{op[0] == 3'd2}} & pr_op[2]) | ({3{op[0] == 3'd3}} & pr_op[3]) | ({3{op[0] == 3'd4}} & pr_op[4]) | ({3{op[0] == 3'd5}} & pr_op[5]) | ({3{op[0] == 3'd6}} & pr_op[6]);
+  assign sort_key[1] = ({3{op[1] == 3'd0}} & pr_op[0]) | ({3{op[1] == 3'd1}} & pr_op[1]) | ({3{op[1] == 3'd2}} & pr_op[2]) | ({3{op[1] == 3'd3}} & pr_op[3]) | ({3{op[1] == 3'd4}} & pr_op[4]) | ({3{op[1] == 3'd5}} & pr_op[5]) | ({3{op[1] == 3'd6}} & pr_op[6]);
+  assign sort_key[2] = ({3{op[2] == 3'd0}} & pr_op[0]) | ({3{op[2] == 3'd1}} & pr_op[1]) | ({3{op[2] == 3'd2}} & pr_op[2]) | ({3{op[2] == 3'd3}} & pr_op[3]) | ({3{op[2] == 3'd4}} & pr_op[4]) | ({3{op[2] == 3'd5}} & pr_op[5]) | ({3{op[2] == 3'd6}} & pr_op[6]);
+  assign sort_key[3] = ({3{op[3] == 3'd0}} & pr_op[0]) | ({3{op[3] == 3'd1}} & pr_op[1]) | ({3{op[3] == 3'd2}} & pr_op[2]) | ({3{op[3] == 3'd3}} & pr_op[3]) | ({3{op[3] == 3'd4}} & pr_op[4]) | ({3{op[3] == 3'd5}} & pr_op[5]) | ({3{op[3] == 3'd6}} & pr_op[6]);
+  assign sort_key[4] = ({3{op[4] == 3'd0}} & pr_op[0]) | ({3{op[4] == 3'd1}} & pr_op[1]) | ({3{op[4] == 3'd2}} & pr_op[2]) | ({3{op[4] == 3'd3}} & pr_op[3]) | ({3{op[4] == 3'd4}} & pr_op[4]) | ({3{op[4] == 3'd5}} & pr_op[5]) | ({3{op[4] == 3'd6}} & pr_op[6]);
+  assign sort_key[5] = ({3{op[5] == 3'd0}} & pr_op[0]) | ({3{op[5] == 3'd1}} & pr_op[1]) | ({3{op[5] == 3'd2}} & pr_op[2]) | ({3{op[5] == 3'd3}} & pr_op[3]) | ({3{op[5] == 3'd4}} & pr_op[4]) | ({3{op[5] == 3'd5}} & pr_op[5]) | ({3{op[5] == 3'd6}} & pr_op[6]);
+  assign sort_key[6] = ({3{op[6] == 3'd0}} & pr_op[0]) | ({3{op[6] == 3'd1}} & pr_op[1]) | ({3{op[6] == 3'd2}} & pr_op[2]) | ({3{op[6] == 3'd3}} & pr_op[3]) | ({3{op[6] == 3'd4}} & pr_op[4]) | ({3{op[6] == 3'd5}} & pr_op[5]) | ({3{op[6] == 3'd6}} & pr_op[6]);
+  assign sort_key[7] = ({3{op[7] == 3'd0}} & pr_op[0]) | ({3{op[7] == 3'd1}} & pr_op[1]) | ({3{op[7] == 3'd2}} & pr_op[2]) | ({3{op[7] == 3'd3}} & pr_op[3]) | ({3{op[7] == 3'd4}} & pr_op[4]) | ({3{op[7] == 3'd5}} & pr_op[5]) | ({3{op[7] == 3'd6}} & pr_op[6]);
+  wire [5:0] lat [0:7];
+  wire [7:0] wr, rr, st, connected, first_group, member_a;
+  wire [7:0] dep [0:7];
+//
+// PER-INSTRUCTION DECODE
+// Select latency by opcode. wr marks arithmetic/LOAD writes to rd; rr marks
+// arithmetic/BRANCH reads of rs and rt; st marks STORE's read of rd.
+// There is no special zero register: comparisons involving register 0 count.
+//
+  assign {op[0], rs[0], rt[0], rd[0]} = Inst_seq_I[0 +: 12];
+  assign lat[0] = ({6{op[0] == 3'd0}} & opcode_latency[0]) | ({6{op[0] == 3'd1}} & opcode_latency[1]) | ({6{op[0] == 3'd2}} & opcode_latency[2]) | ({6{op[0] == 3'd3}} & opcode_latency[3]) | ({6{op[0] == 3'd4}} & opcode_latency[4]) | ({6{op[0] == 3'd5}} & opcode_latency[5]) | ({6{op[0] == 3'd6}} & opcode_latency[6]) | ({6{op[0] == 3'd7}} & opcode_latency[7]);
+  assign wr[0] = op[0] <= 3'd4;
+  assign rr[0] = !op[0][2] || op[0] == 3'd6;
+  assign st[0] = op[0] == 3'd5;
+  assign {op[1], rs[1], rt[1], rd[1]} = Inst_seq_I[12 +: 12];
+  assign lat[1] = ({6{op[1] == 3'd0}} & opcode_latency[0]) | ({6{op[1] == 3'd1}} & opcode_latency[1]) | ({6{op[1] == 3'd2}} & opcode_latency[2]) | ({6{op[1] == 3'd3}} & opcode_latency[3]) | ({6{op[1] == 3'd4}} & opcode_latency[4]) | ({6{op[1] == 3'd5}} & opcode_latency[5]) | ({6{op[1] == 3'd6}} & opcode_latency[6]) | ({6{op[1] == 3'd7}} & opcode_latency[7]);
+  assign wr[1] = op[1] <= 3'd4;
+  assign rr[1] = !op[1][2] || op[1] == 3'd6;
+  assign st[1] = op[1] == 3'd5;
+  assign {op[2], rs[2], rt[2], rd[2]} = Inst_seq_I[24 +: 12];
+  assign lat[2] = ({6{op[2] == 3'd0}} & opcode_latency[0]) | ({6{op[2] == 3'd1}} & opcode_latency[1]) | ({6{op[2] == 3'd2}} & opcode_latency[2]) | ({6{op[2] == 3'd3}} & opcode_latency[3]) | ({6{op[2] == 3'd4}} & opcode_latency[4]) | ({6{op[2] == 3'd5}} & opcode_latency[5]) | ({6{op[2] == 3'd6}} & opcode_latency[6]) | ({6{op[2] == 3'd7}} & opcode_latency[7]);
+  assign wr[2] = op[2] <= 3'd4;
+  assign rr[2] = !op[2][2] || op[2] == 3'd6;
+  assign st[2] = op[2] == 3'd5;
+  assign {op[3], rs[3], rt[3], rd[3]} = Inst_seq_I[36 +: 12];
+  assign lat[3] = ({6{op[3] == 3'd0}} & opcode_latency[0]) | ({6{op[3] == 3'd1}} & opcode_latency[1]) | ({6{op[3] == 3'd2}} & opcode_latency[2]) | ({6{op[3] == 3'd3}} & opcode_latency[3]) | ({6{op[3] == 3'd4}} & opcode_latency[4]) | ({6{op[3] == 3'd5}} & opcode_latency[5]) | ({6{op[3] == 3'd6}} & opcode_latency[6]) | ({6{op[3] == 3'd7}} & opcode_latency[7]);
+  assign wr[3] = op[3] <= 3'd4;
+  assign rr[3] = !op[3][2] || op[3] == 3'd6;
+  assign st[3] = op[3] == 3'd5;
+  assign {op[4], rs[4], rt[4], rd[4]} = Inst_seq_I[48 +: 12];
+  assign lat[4] = ({6{op[4] == 3'd0}} & opcode_latency[0]) | ({6{op[4] == 3'd1}} & opcode_latency[1]) | ({6{op[4] == 3'd2}} & opcode_latency[2]) | ({6{op[4] == 3'd3}} & opcode_latency[3]) | ({6{op[4] == 3'd4}} & opcode_latency[4]) | ({6{op[4] == 3'd5}} & opcode_latency[5]) | ({6{op[4] == 3'd6}} & opcode_latency[6]) | ({6{op[4] == 3'd7}} & opcode_latency[7]);
+  assign wr[4] = op[4] <= 3'd4;
+  assign rr[4] = !op[4][2] || op[4] == 3'd6;
+  assign st[4] = op[4] == 3'd5;
+  assign {op[5], rs[5], rt[5], rd[5]} = Inst_seq_I[60 +: 12];
+  assign lat[5] = ({6{op[5] == 3'd0}} & opcode_latency[0]) | ({6{op[5] == 3'd1}} & opcode_latency[1]) | ({6{op[5] == 3'd2}} & opcode_latency[2]) | ({6{op[5] == 3'd3}} & opcode_latency[3]) | ({6{op[5] == 3'd4}} & opcode_latency[4]) | ({6{op[5] == 3'd5}} & opcode_latency[5]) | ({6{op[5] == 3'd6}} & opcode_latency[6]) | ({6{op[5] == 3'd7}} & opcode_latency[7]);
+  assign wr[5] = op[5] <= 3'd4;
+  assign rr[5] = !op[5][2] || op[5] == 3'd6;
+  assign st[5] = op[5] == 3'd5;
+  assign {op[6], rs[6], rt[6], rd[6]} = Inst_seq_I[72 +: 12];
+  assign lat[6] = ({6{op[6] == 3'd0}} & opcode_latency[0]) | ({6{op[6] == 3'd1}} & opcode_latency[1]) | ({6{op[6] == 3'd2}} & opcode_latency[2]) | ({6{op[6] == 3'd3}} & opcode_latency[3]) | ({6{op[6] == 3'd4}} & opcode_latency[4]) | ({6{op[6] == 3'd5}} & opcode_latency[5]) | ({6{op[6] == 3'd6}} & opcode_latency[6]) | ({6{op[6] == 3'd7}} & opcode_latency[7]);
+  assign wr[6] = op[6] <= 3'd4;
+  assign rr[6] = !op[6][2] || op[6] == 3'd6;
+  assign st[6] = op[6] == 3'd5;
+  assign {op[7], rs[7], rt[7], rd[7]} = Inst_seq_I[84 +: 12];
+  assign lat[7] = ({6{op[7] == 3'd0}} & opcode_latency[0]) | ({6{op[7] == 3'd1}} & opcode_latency[1]) | ({6{op[7] == 3'd2}} & opcode_latency[2]) | ({6{op[7] == 3'd3}} & opcode_latency[3]) | ({6{op[7] == 3'd4}} & opcode_latency[4]) | ({6{op[7] == 3'd5}} & opcode_latency[5]) | ({6{op[7] == 3'd6}} & opcode_latency[6]) | ({6{op[7] == 3'd7}} & opcode_latency[7]);
+  assign wr[7] = op[7] <= 3'd4;
+  assign rr[7] = !op[7][2] || op[7] == 3'd6;
+  assign st[7] = op[7] == 3'd5;
+//
+// PARALLEL HAZARD MATRIX
+// dep[i][j] for j<i means original instruction j must precede i. The three
+// terms cover writes feeding reads (RAW), reads before writes (WAR), and
+// equal rd fields for WAW or a STORE read. LOAD has no rs/rt reads here.
+// Upper-triangular and diagonal entries are constant zero. All 28 unordered
+// pairs are evaluated in parallel; this is not a sequential dependency scan.
+//
+  assign dep[0][0] = 1'b0;
+  assign dep[0][1] = 1'b0;
+  assign dep[0][2] = 1'b0;
+  assign dep[0][3] = 1'b0;
+  assign dep[0][4] = 1'b0;
+  assign dep[0][5] = 1'b0;
+  assign dep[0][6] = 1'b0;
+  assign dep[0][7] = 1'b0;
+  assign dep[1][0] =
+      (wr[0] && rr[1] && (rd[0] == rs[1] || rd[0] == rt[1])) ||
+      (wr[1] && rr[0] && (rd[1] == rs[0] || rd[1] == rt[0])) ||
+      ((rd[1] == rd[0]) && ((wr[1] && wr[0]) ||
+           (wr[0] && st[1]) || (wr[1] && st[0])));
+  assign dep[1][1] = 1'b0;
+  assign dep[1][2] = 1'b0;
+  assign dep[1][3] = 1'b0;
+  assign dep[1][4] = 1'b0;
+  assign dep[1][5] = 1'b0;
+  assign dep[1][6] = 1'b0;
+  assign dep[1][7] = 1'b0;
+  assign dep[2][0] =
+      (wr[0] && rr[2] && (rd[0] == rs[2] || rd[0] == rt[2])) ||
+      (wr[2] && rr[0] && (rd[2] == rs[0] || rd[2] == rt[0])) ||
+      ((rd[2] == rd[0]) && ((wr[2] && wr[0]) ||
+           (wr[0] && st[2]) || (wr[2] && st[0])));
+  assign dep[2][1] =
+      (wr[1] && rr[2] && (rd[1] == rs[2] || rd[1] == rt[2])) ||
+      (wr[2] && rr[1] && (rd[2] == rs[1] || rd[2] == rt[1])) ||
+      ((rd[2] == rd[1]) && ((wr[2] && wr[1]) ||
+           (wr[1] && st[2]) || (wr[2] && st[1])));
+  assign dep[2][2] = 1'b0;
+  assign dep[2][3] = 1'b0;
+  assign dep[2][4] = 1'b0;
+  assign dep[2][5] = 1'b0;
+  assign dep[2][6] = 1'b0;
+  assign dep[2][7] = 1'b0;
+  assign dep[3][0] =
+      (wr[0] && rr[3] && (rd[0] == rs[3] || rd[0] == rt[3])) ||
+      (wr[3] && rr[0] && (rd[3] == rs[0] || rd[3] == rt[0])) ||
+      ((rd[3] == rd[0]) && ((wr[3] && wr[0]) ||
+           (wr[0] && st[3]) || (wr[3] && st[0])));
+  assign dep[3][1] =
+      (wr[1] && rr[3] && (rd[1] == rs[3] || rd[1] == rt[3])) ||
+      (wr[3] && rr[1] && (rd[3] == rs[1] || rd[3] == rt[1])) ||
+      ((rd[3] == rd[1]) && ((wr[3] && wr[1]) ||
+           (wr[1] && st[3]) || (wr[3] && st[1])));
+  assign dep[3][2] =
+      (wr[2] && rr[3] && (rd[2] == rs[3] || rd[2] == rt[3])) ||
+      (wr[3] && rr[2] && (rd[3] == rs[2] || rd[3] == rt[2])) ||
+      ((rd[3] == rd[2]) && ((wr[3] && wr[2]) ||
+           (wr[2] && st[3]) || (wr[3] && st[2])));
+  assign dep[3][3] = 1'b0;
+  assign dep[3][4] = 1'b0;
+  assign dep[3][5] = 1'b0;
+  assign dep[3][6] = 1'b0;
+  assign dep[3][7] = 1'b0;
+  assign dep[4][0] =
+      (wr[0] && rr[4] && (rd[0] == rs[4] || rd[0] == rt[4])) ||
+      (wr[4] && rr[0] && (rd[4] == rs[0] || rd[4] == rt[0])) ||
+      ((rd[4] == rd[0]) && ((wr[4] && wr[0]) ||
+           (wr[0] && st[4]) || (wr[4] && st[0])));
+  assign dep[4][1] =
+      (wr[1] && rr[4] && (rd[1] == rs[4] || rd[1] == rt[4])) ||
+      (wr[4] && rr[1] && (rd[4] == rs[1] || rd[4] == rt[1])) ||
+      ((rd[4] == rd[1]) && ((wr[4] && wr[1]) ||
+           (wr[1] && st[4]) || (wr[4] && st[1])));
+  assign dep[4][2] =
+      (wr[2] && rr[4] && (rd[2] == rs[4] || rd[2] == rt[4])) ||
+      (wr[4] && rr[2] && (rd[4] == rs[2] || rd[4] == rt[2])) ||
+      ((rd[4] == rd[2]) && ((wr[4] && wr[2]) ||
+           (wr[2] && st[4]) || (wr[4] && st[2])));
+  assign dep[4][3] =
+      (wr[3] && rr[4] && (rd[3] == rs[4] || rd[3] == rt[4])) ||
+      (wr[4] && rr[3] && (rd[4] == rs[3] || rd[4] == rt[3])) ||
+      ((rd[4] == rd[3]) && ((wr[4] && wr[3]) ||
+           (wr[3] && st[4]) || (wr[4] && st[3])));
+  assign dep[4][4] = 1'b0;
+  assign dep[4][5] = 1'b0;
+  assign dep[4][6] = 1'b0;
+  assign dep[4][7] = 1'b0;
+  assign dep[5][0] =
+      (wr[0] && rr[5] && (rd[0] == rs[5] || rd[0] == rt[5])) ||
+      (wr[5] && rr[0] && (rd[5] == rs[0] || rd[5] == rt[0])) ||
+      ((rd[5] == rd[0]) && ((wr[5] && wr[0]) ||
+           (wr[0] && st[5]) || (wr[5] && st[0])));
+  assign dep[5][1] =
+      (wr[1] && rr[5] && (rd[1] == rs[5] || rd[1] == rt[5])) ||
+      (wr[5] && rr[1] && (rd[5] == rs[1] || rd[5] == rt[1])) ||
+      ((rd[5] == rd[1]) && ((wr[5] && wr[1]) ||
+           (wr[1] && st[5]) || (wr[5] && st[1])));
+  assign dep[5][2] =
+      (wr[2] && rr[5] && (rd[2] == rs[5] || rd[2] == rt[5])) ||
+      (wr[5] && rr[2] && (rd[5] == rs[2] || rd[5] == rt[2])) ||
+      ((rd[5] == rd[2]) && ((wr[5] && wr[2]) ||
+           (wr[2] && st[5]) || (wr[5] && st[2])));
+  assign dep[5][3] =
+      (wr[3] && rr[5] && (rd[3] == rs[5] || rd[3] == rt[5])) ||
+      (wr[5] && rr[3] && (rd[5] == rs[3] || rd[5] == rt[3])) ||
+      ((rd[5] == rd[3]) && ((wr[5] && wr[3]) ||
+           (wr[3] && st[5]) || (wr[5] && st[3])));
+  assign dep[5][4] =
+      (wr[4] && rr[5] && (rd[4] == rs[5] || rd[4] == rt[5])) ||
+      (wr[5] && rr[4] && (rd[5] == rs[4] || rd[5] == rt[4])) ||
+      ((rd[5] == rd[4]) && ((wr[5] && wr[4]) ||
+           (wr[4] && st[5]) || (wr[5] && st[4])));
+  assign dep[5][5] = 1'b0;
+  assign dep[5][6] = 1'b0;
+  assign dep[5][7] = 1'b0;
+  assign dep[6][0] =
+      (wr[0] && rr[6] && (rd[0] == rs[6] || rd[0] == rt[6])) ||
+      (wr[6] && rr[0] && (rd[6] == rs[0] || rd[6] == rt[0])) ||
+      ((rd[6] == rd[0]) && ((wr[6] && wr[0]) ||
+           (wr[0] && st[6]) || (wr[6] && st[0])));
+  assign dep[6][1] =
+      (wr[1] && rr[6] && (rd[1] == rs[6] || rd[1] == rt[6])) ||
+      (wr[6] && rr[1] && (rd[6] == rs[1] || rd[6] == rt[1])) ||
+      ((rd[6] == rd[1]) && ((wr[6] && wr[1]) ||
+           (wr[1] && st[6]) || (wr[6] && st[1])));
+  assign dep[6][2] =
+      (wr[2] && rr[6] && (rd[2] == rs[6] || rd[2] == rt[6])) ||
+      (wr[6] && rr[2] && (rd[6] == rs[2] || rd[6] == rt[2])) ||
+      ((rd[6] == rd[2]) && ((wr[6] && wr[2]) ||
+           (wr[2] && st[6]) || (wr[6] && st[2])));
+  assign dep[6][3] =
+      (wr[3] && rr[6] && (rd[3] == rs[6] || rd[3] == rt[6])) ||
+      (wr[6] && rr[3] && (rd[6] == rs[3] || rd[6] == rt[3])) ||
+      ((rd[6] == rd[3]) && ((wr[6] && wr[3]) ||
+           (wr[3] && st[6]) || (wr[6] && st[3])));
+  assign dep[6][4] =
+      (wr[4] && rr[6] && (rd[4] == rs[6] || rd[4] == rt[6])) ||
+      (wr[6] && rr[4] && (rd[6] == rs[4] || rd[6] == rt[4])) ||
+      ((rd[6] == rd[4]) && ((wr[6] && wr[4]) ||
+           (wr[4] && st[6]) || (wr[6] && st[4])));
+  assign dep[6][5] =
+      (wr[5] && rr[6] && (rd[5] == rs[6] || rd[5] == rt[6])) ||
+      (wr[6] && rr[5] && (rd[6] == rs[5] || rd[6] == rt[5])) ||
+      ((rd[6] == rd[5]) && ((wr[6] && wr[5]) ||
+           (wr[5] && st[6]) || (wr[6] && st[5])));
+  assign dep[6][6] = 1'b0;
+  assign dep[6][7] = 1'b0;
+  assign dep[7][0] =
+      (wr[0] && rr[7] && (rd[0] == rs[7] || rd[0] == rt[7])) ||
+      (wr[7] && rr[0] && (rd[7] == rs[0] || rd[7] == rt[0])) ||
+      ((rd[7] == rd[0]) && ((wr[7] && wr[0]) ||
+           (wr[0] && st[7]) || (wr[7] && st[0])));
+  assign dep[7][1] =
+      (wr[1] && rr[7] && (rd[1] == rs[7] || rd[1] == rt[7])) ||
+      (wr[7] && rr[1] && (rd[7] == rs[1] || rd[7] == rt[1])) ||
+      ((rd[7] == rd[1]) && ((wr[7] && wr[1]) ||
+           (wr[1] && st[7]) || (wr[7] && st[1])));
+  assign dep[7][2] =
+      (wr[2] && rr[7] && (rd[2] == rs[7] || rd[2] == rt[7])) ||
+      (wr[7] && rr[2] && (rd[7] == rs[2] || rd[7] == rt[2])) ||
+      ((rd[7] == rd[2]) && ((wr[7] && wr[2]) ||
+           (wr[2] && st[7]) || (wr[7] && st[2])));
+  assign dep[7][3] =
+      (wr[3] && rr[7] && (rd[3] == rs[7] || rd[3] == rt[7])) ||
+      (wr[7] && rr[3] && (rd[7] == rs[3] || rd[7] == rt[3])) ||
+      ((rd[7] == rd[3]) && ((wr[7] && wr[3]) ||
+           (wr[3] && st[7]) || (wr[7] && st[3])));
+  assign dep[7][4] =
+      (wr[4] && rr[7] && (rd[4] == rs[7] || rd[4] == rt[7])) ||
+      (wr[7] && rr[4] && (rd[7] == rs[4] || rd[7] == rt[4])) ||
+      ((rd[7] == rd[4]) && ((wr[7] && wr[4]) ||
+           (wr[4] && st[7]) || (wr[7] && st[4])));
+  assign dep[7][5] =
+      (wr[5] && rr[7] && (rd[5] == rs[7] || rd[5] == rt[7])) ||
+      (wr[7] && rr[5] && (rd[7] == rs[5] || rd[7] == rt[5])) ||
+      ((rd[7] == rd[5]) && ((wr[7] && wr[5]) ||
+           (wr[5] && st[7]) || (wr[7] && st[5])));
+  assign dep[7][6] =
+      (wr[6] && rr[7] && (rd[6] == rs[7] || rd[6] == rt[7])) ||
+      (wr[7] && rr[6] && (rd[7] == rs[6] || rd[7] == rt[6])) ||
+      ((rd[7] == rd[6]) && ((wr[7] && wr[6]) ||
+           (wr[6] && st[7]) || (wr[7] && st[6])));
+  assign dep[7][7] = 1'b0;
+//
+// CHAIN MEMBERSHIP FROM THE GUARANTEED GRAPH SHAPE
+// connected marks any instruction incident to a hazard. For two chains all
+// instructions are connected. Adjacent connected entries without a direct
+// dependency belong to different chains, so grp_turn toggles chain parity.
+// Within one ordered chain adjacent members depend on each other; redundant
+// transitive edges do not change this construction. In the single-chain case
+// connected entries remain in one group, with isolated entries excluded.
+//
+  assign connected[0] = dep[1][0] | dep[2][0] | dep[3][0] | dep[4][0] | dep[5][0] | dep[6][0] | dep[7][0];
+  assign connected[1] = dep[1][0] | dep[2][1] | dep[3][1] | dep[4][1] | dep[5][1] | dep[6][1] | dep[7][1];
+  assign connected[2] = dep[2][0] | dep[2][1] | dep[3][2] | dep[4][2] | dep[5][2] | dep[6][2] | dep[7][2];
+  assign connected[3] = dep[3][0] | dep[3][1] | dep[3][2] | dep[4][3] | dep[5][3] | dep[6][3] | dep[7][3];
+  assign connected[4] = dep[4][0] | dep[4][1] | dep[4][2] | dep[4][3] | dep[5][4] | dep[6][4] | dep[7][4];
+  assign connected[5] = dep[5][0] | dep[5][1] | dep[5][2] | dep[5][3] | dep[5][4] | dep[6][5] | dep[7][5];
+  assign connected[6] = dep[6][0] | dep[6][1] | dep[6][2] | dep[6][3] | dep[6][4] | dep[6][5] | dep[7][6];
+  assign connected[7] = dep[7][0] | dep[7][1] | dep[7][2] | dep[7][3] | dep[7][4] | dep[7][5] | dep[7][6];
+  wire [7:0] grp_turn;
+  assign grp_turn[0] = 1'b0;
+  assign grp_turn[1] = connected[1] && connected[0] && !dep[1][0];
+  assign grp_turn[2] = connected[2] && connected[1] && !dep[2][1];
+  assign grp_turn[3] = connected[3] && connected[2] && !dep[3][2];
+  assign grp_turn[4] = connected[4] && connected[3] && !dep[4][3];
+  assign grp_turn[5] = connected[5] && connected[4] && !dep[5][4];
+  assign grp_turn[6] = connected[6] && connected[5] && !dep[6][5];
+  assign grp_turn[7] = connected[7] && connected[6] && !dep[7][6];
+  assign first_group[0] = connected[0];
+  assign first_group[1] = connected[1] && !(^grp_turn[1:1]);
+  assign first_group[2] = connected[2] && !(^grp_turn[2:1]);
+  assign first_group[3] = connected[3] && !(^grp_turn[3:1]);
+  assign first_group[4] = connected[4] && !(^grp_turn[4:1]);
+  assign first_group[5] = connected[5] && !(^grp_turn[5:1]);
+  assign first_group[6] = connected[6] && !(^grp_turn[6:1]);
+  assign first_group[7] = connected[7] && !(^grp_turn[7:1]);
+  assign other_chain = |grp_turn;
+//
+// NORMALIZE THE TWO-CHAIN SPLIT
+// A is the first detected chain unless it contains more than four entries.
+// In that case exchange labels, making A the smaller chain: (2,6), (3,5),
+// or (4,4). Only the two-chain case swaps. For a single chain count_a may
+// reach eight; for an empty graph it is zero. The other engine handles both.
+//
+  wire [3:0] group_size, count_a;
+  assign group_size = {3'b0, first_group[0]} + {3'b0, first_group[1]} + {3'b0, first_group[2]} + {3'b0, first_group[3]} + {3'b0, first_group[4]} + {3'b0, first_group[5]} + {3'b0, first_group[6]} + {3'b0, first_group[7]};
+  assign swap_groups = other_chain && group_size > 4'd4;
+  assign member_a = first_group ^ {8{swap_groups}};
+  assign count_a = swap_groups ? 4'd8 - group_size : group_size;
+//
+// EARLY RANKS WITHOUT WAITING FOR GROUP NORMALIZATION
+// A connected instruction counts preceding members of its original chain,
+// using the parity between positions. An isolated instruction counts longer
+// independent keys; equal keys put the earlier original ID first here.
+// These ranks are invariant under swapping chain labels, so their computation
+// runs alongside group-size normalization instead of following its mux.
+// Each rank fits three bits because an instruction has at most seven peers.
+//
+  wire [2:0] rank_in_group [0:7];
+  wire [7:0] before_0;
+  assign before_0[0] = 1'b0;
+  assign before_0[1] = !connected[0] && !connected[1] && sort_key[1] > sort_key[0];
+  assign before_0[2] = !connected[0] && !connected[2] && sort_key[2] > sort_key[0];
+  assign before_0[3] = !connected[0] && !connected[3] && sort_key[3] > sort_key[0];
+  assign before_0[4] = !connected[0] && !connected[4] && sort_key[4] > sort_key[0];
+  assign before_0[5] = !connected[0] && !connected[5] && sort_key[5] > sort_key[0];
+  assign before_0[6] = !connected[0] && !connected[6] && sort_key[6] > sort_key[0];
+  assign before_0[7] = !connected[0] && !connected[7] && sort_key[7] > sort_key[0];
+  assign rank_in_group[0] = {2'b0, before_0[0]} + {2'b0, before_0[1]} + {2'b0, before_0[2]} + {2'b0, before_0[3]} + {2'b0, before_0[4]} + {2'b0, before_0[5]} + {2'b0, before_0[6]} + {2'b0, before_0[7]};
+  wire [7:0] before_1;
+  assign before_1[0] = connected[1] ? (connected[0] && !(^grp_turn[1:1])) : (!connected[0] && sort_key[0] >= sort_key[1]);
+  assign before_1[1] = 1'b0;
+  assign before_1[2] = !connected[1] && !connected[2] && sort_key[2] > sort_key[1];
+  assign before_1[3] = !connected[1] && !connected[3] && sort_key[3] > sort_key[1];
+  assign before_1[4] = !connected[1] && !connected[4] && sort_key[4] > sort_key[1];
+  assign before_1[5] = !connected[1] && !connected[5] && sort_key[5] > sort_key[1];
+  assign before_1[6] = !connected[1] && !connected[6] && sort_key[6] > sort_key[1];
+  assign before_1[7] = !connected[1] && !connected[7] && sort_key[7] > sort_key[1];
+  assign rank_in_group[1] = {2'b0, before_1[0]} + {2'b0, before_1[1]} + {2'b0, before_1[2]} + {2'b0, before_1[3]} + {2'b0, before_1[4]} + {2'b0, before_1[5]} + {2'b0, before_1[6]} + {2'b0, before_1[7]};
+  wire [7:0] before_2;
+  assign before_2[0] = connected[2] ? (connected[0] && !(^grp_turn[2:1])) : (!connected[0] && sort_key[0] >= sort_key[2]);
+  assign before_2[1] = connected[2] ? (connected[1] && !(^grp_turn[2:2])) : (!connected[1] && sort_key[1] >= sort_key[2]);
+  assign before_2[2] = 1'b0;
+  assign before_2[3] = !connected[2] && !connected[3] && sort_key[3] > sort_key[2];
+  assign before_2[4] = !connected[2] && !connected[4] && sort_key[4] > sort_key[2];
+  assign before_2[5] = !connected[2] && !connected[5] && sort_key[5] > sort_key[2];
+  assign before_2[6] = !connected[2] && !connected[6] && sort_key[6] > sort_key[2];
+  assign before_2[7] = !connected[2] && !connected[7] && sort_key[7] > sort_key[2];
+  assign rank_in_group[2] = {2'b0, before_2[0]} + {2'b0, before_2[1]} + {2'b0, before_2[2]} + {2'b0, before_2[3]} + {2'b0, before_2[4]} + {2'b0, before_2[5]} + {2'b0, before_2[6]} + {2'b0, before_2[7]};
+  wire [7:0] before_3;
+  assign before_3[0] = connected[3] ? (connected[0] && !(^grp_turn[3:1])) : (!connected[0] && sort_key[0] >= sort_key[3]);
+  assign before_3[1] = connected[3] ? (connected[1] && !(^grp_turn[3:2])) : (!connected[1] && sort_key[1] >= sort_key[3]);
+  assign before_3[2] = connected[3] ? (connected[2] && !(^grp_turn[3:3])) : (!connected[2] && sort_key[2] >= sort_key[3]);
+  assign before_3[3] = 1'b0;
+  assign before_3[4] = !connected[3] && !connected[4] && sort_key[4] > sort_key[3];
+  assign before_3[5] = !connected[3] && !connected[5] && sort_key[5] > sort_key[3];
+  assign before_3[6] = !connected[3] && !connected[6] && sort_key[6] > sort_key[3];
+  assign before_3[7] = !connected[3] && !connected[7] && sort_key[7] > sort_key[3];
+  assign rank_in_group[3] = {2'b0, before_3[0]} + {2'b0, before_3[1]} + {2'b0, before_3[2]} + {2'b0, before_3[3]} + {2'b0, before_3[4]} + {2'b0, before_3[5]} + {2'b0, before_3[6]} + {2'b0, before_3[7]};
+  wire [7:0] before_4;
+  assign before_4[0] = connected[4] ? (connected[0] && !(^grp_turn[4:1])) : (!connected[0] && sort_key[0] >= sort_key[4]);
+  assign before_4[1] = connected[4] ? (connected[1] && !(^grp_turn[4:2])) : (!connected[1] && sort_key[1] >= sort_key[4]);
+  assign before_4[2] = connected[4] ? (connected[2] && !(^grp_turn[4:3])) : (!connected[2] && sort_key[2] >= sort_key[4]);
+  assign before_4[3] = connected[4] ? (connected[3] && !(^grp_turn[4:4])) : (!connected[3] && sort_key[3] >= sort_key[4]);
+  assign before_4[4] = 1'b0;
+  assign before_4[5] = !connected[4] && !connected[5] && sort_key[5] > sort_key[4];
+  assign before_4[6] = !connected[4] && !connected[6] && sort_key[6] > sort_key[4];
+  assign before_4[7] = !connected[4] && !connected[7] && sort_key[7] > sort_key[4];
+  assign rank_in_group[4] = {2'b0, before_4[0]} + {2'b0, before_4[1]} + {2'b0, before_4[2]} + {2'b0, before_4[3]} + {2'b0, before_4[4]} + {2'b0, before_4[5]} + {2'b0, before_4[6]} + {2'b0, before_4[7]};
+  wire [7:0] before_5;
+  assign before_5[0] = connected[5] ? (connected[0] && !(^grp_turn[5:1])) : (!connected[0] && sort_key[0] >= sort_key[5]);
+  assign before_5[1] = connected[5] ? (connected[1] && !(^grp_turn[5:2])) : (!connected[1] && sort_key[1] >= sort_key[5]);
+  assign before_5[2] = connected[5] ? (connected[2] && !(^grp_turn[5:3])) : (!connected[2] && sort_key[2] >= sort_key[5]);
+  assign before_5[3] = connected[5] ? (connected[3] && !(^grp_turn[5:4])) : (!connected[3] && sort_key[3] >= sort_key[5]);
+  assign before_5[4] = connected[5] ? (connected[4] && !(^grp_turn[5:5])) : (!connected[4] && sort_key[4] >= sort_key[5]);
+  assign before_5[5] = 1'b0;
+  assign before_5[6] = !connected[5] && !connected[6] && sort_key[6] > sort_key[5];
+  assign before_5[7] = !connected[5] && !connected[7] && sort_key[7] > sort_key[5];
+  assign rank_in_group[5] = {2'b0, before_5[0]} + {2'b0, before_5[1]} + {2'b0, before_5[2]} + {2'b0, before_5[3]} + {2'b0, before_5[4]} + {2'b0, before_5[5]} + {2'b0, before_5[6]} + {2'b0, before_5[7]};
+  wire [7:0] before_6;
+  assign before_6[0] = connected[6] ? (connected[0] && !(^grp_turn[6:1])) : (!connected[0] && sort_key[0] >= sort_key[6]);
+  assign before_6[1] = connected[6] ? (connected[1] && !(^grp_turn[6:2])) : (!connected[1] && sort_key[1] >= sort_key[6]);
+  assign before_6[2] = connected[6] ? (connected[2] && !(^grp_turn[6:3])) : (!connected[2] && sort_key[2] >= sort_key[6]);
+  assign before_6[3] = connected[6] ? (connected[3] && !(^grp_turn[6:4])) : (!connected[3] && sort_key[3] >= sort_key[6]);
+  assign before_6[4] = connected[6] ? (connected[4] && !(^grp_turn[6:5])) : (!connected[4] && sort_key[4] >= sort_key[6]);
+  assign before_6[5] = connected[6] ? (connected[5] && !(^grp_turn[6:6])) : (!connected[5] && sort_key[5] >= sort_key[6]);
+  assign before_6[6] = 1'b0;
+  assign before_6[7] = !connected[6] && !connected[7] && sort_key[7] > sort_key[6];
+  assign rank_in_group[6] = {2'b0, before_6[0]} + {2'b0, before_6[1]} + {2'b0, before_6[2]} + {2'b0, before_6[3]} + {2'b0, before_6[4]} + {2'b0, before_6[5]} + {2'b0, before_6[6]} + {2'b0, before_6[7]};
+  wire [7:0] before_7;
+  assign before_7[0] = connected[7] ? (connected[0] && !(^grp_turn[7:1])) : (!connected[0] && sort_key[0] >= sort_key[7]);
+  assign before_7[1] = connected[7] ? (connected[1] && !(^grp_turn[7:2])) : (!connected[1] && sort_key[1] >= sort_key[7]);
+  assign before_7[2] = connected[7] ? (connected[2] && !(^grp_turn[7:3])) : (!connected[2] && sort_key[2] >= sort_key[7]);
+  assign before_7[3] = connected[7] ? (connected[3] && !(^grp_turn[7:4])) : (!connected[3] && sort_key[3] >= sort_key[7]);
+  assign before_7[4] = connected[7] ? (connected[4] && !(^grp_turn[7:5])) : (!connected[4] && sort_key[4] >= sort_key[7]);
+  assign before_7[5] = connected[7] ? (connected[5] && !(^grp_turn[7:6])) : (!connected[5] && sort_key[5] >= sort_key[7]);
+  assign before_7[6] = connected[7] ? (connected[6] && !(^grp_turn[7:7])) : (!connected[6] && sort_key[6] >= sort_key[7]);
+  assign before_7[7] = 1'b0;
+  assign rank_in_group[7] = {2'b0, before_7[0]} + {2'b0, before_7[1]} + {2'b0, before_7[2]} + {2'b0, before_7[3]} + {2'b0, before_7[4]} + {2'b0, before_7[5]} + {2'b0, before_7[6]} + {2'b0, before_7[7]};
+//
+// ONE-HOT COMPACTION AND IDENTIFIERS
+// sel_a_k selects the member whose chain rank is k. OR together masked
+// latencies and original IDs to form compact slots; group B is analogous.
+// Valid ranks are unique within a group, making these masked ORs muxes.
+// Empty slots become zero, so later fixed-length prefixes equal the actual
+// chain totals once their valid entries are exhausted. The unrolled winner
+// keeps this compaction network; the parameterized winner uses shifts for A.
+//
+  wire [5:0] a_lat [0:7], b_lat [0:7];
+  wire [2:0] a_id [0:7], b_id [0:7];
+  wire [7:0] sel_a_0;
+  assign sel_a_0[0] = member_a[0] && rank_in_group[0] == 3'd0;
+  assign sel_a_0[1] = member_a[1] && rank_in_group[1] == 3'd0;
+  assign sel_a_0[2] = member_a[2] && rank_in_group[2] == 3'd0;
+  assign sel_a_0[3] = member_a[3] && rank_in_group[3] == 3'd0;
+  assign sel_a_0[4] = member_a[4] && rank_in_group[4] == 3'd0;
+  assign sel_a_0[5] = member_a[5] && rank_in_group[5] == 3'd0;
+  assign sel_a_0[6] = member_a[6] && rank_in_group[6] == 3'd0;
+  assign sel_a_0[7] = member_a[7] && rank_in_group[7] == 3'd0;
+  assign a_lat[0] = ({6{sel_a_0[0]}} & lat[0]) | ({6{sel_a_0[1]}} & lat[1]) | ({6{sel_a_0[2]}} & lat[2]) | ({6{sel_a_0[3]}} & lat[3]) | ({6{sel_a_0[4]}} & lat[4]) | ({6{sel_a_0[5]}} & lat[5]) | ({6{sel_a_0[6]}} & lat[6]) | ({6{sel_a_0[7]}} & lat[7]);
+  assign a_id[0] = ({3{sel_a_0[1]}} & 3'd1) | ({3{sel_a_0[2]}} & 3'd2) | ({3{sel_a_0[3]}} & 3'd3) | ({3{sel_a_0[4]}} & 3'd4) | ({3{sel_a_0[5]}} & 3'd5) | ({3{sel_a_0[6]}} & 3'd6) | ({3{sel_a_0[7]}} & 3'd7);
+  wire [7:0] sel_a_1;
+  assign sel_a_1[0] = member_a[0] && rank_in_group[0] == 3'd1;
+  assign sel_a_1[1] = member_a[1] && rank_in_group[1] == 3'd1;
+  assign sel_a_1[2] = member_a[2] && rank_in_group[2] == 3'd1;
+  assign sel_a_1[3] = member_a[3] && rank_in_group[3] == 3'd1;
+  assign sel_a_1[4] = member_a[4] && rank_in_group[4] == 3'd1;
+  assign sel_a_1[5] = member_a[5] && rank_in_group[5] == 3'd1;
+  assign sel_a_1[6] = member_a[6] && rank_in_group[6] == 3'd1;
+  assign sel_a_1[7] = member_a[7] && rank_in_group[7] == 3'd1;
+  assign a_lat[1] = ({6{sel_a_1[0]}} & lat[0]) | ({6{sel_a_1[1]}} & lat[1]) | ({6{sel_a_1[2]}} & lat[2]) | ({6{sel_a_1[3]}} & lat[3]) | ({6{sel_a_1[4]}} & lat[4]) | ({6{sel_a_1[5]}} & lat[5]) | ({6{sel_a_1[6]}} & lat[6]) | ({6{sel_a_1[7]}} & lat[7]);
+  assign a_id[1] = ({3{sel_a_1[1]}} & 3'd1) | ({3{sel_a_1[2]}} & 3'd2) | ({3{sel_a_1[3]}} & 3'd3) | ({3{sel_a_1[4]}} & 3'd4) | ({3{sel_a_1[5]}} & 3'd5) | ({3{sel_a_1[6]}} & 3'd6) | ({3{sel_a_1[7]}} & 3'd7);
+  wire [7:0] sel_a_2;
+  assign sel_a_2[0] = member_a[0] && rank_in_group[0] == 3'd2;
+  assign sel_a_2[1] = member_a[1] && rank_in_group[1] == 3'd2;
+  assign sel_a_2[2] = member_a[2] && rank_in_group[2] == 3'd2;
+  assign sel_a_2[3] = member_a[3] && rank_in_group[3] == 3'd2;
+  assign sel_a_2[4] = member_a[4] && rank_in_group[4] == 3'd2;
+  assign sel_a_2[5] = member_a[5] && rank_in_group[5] == 3'd2;
+  assign sel_a_2[6] = member_a[6] && rank_in_group[6] == 3'd2;
+  assign sel_a_2[7] = member_a[7] && rank_in_group[7] == 3'd2;
+  assign a_lat[2] = ({6{sel_a_2[0]}} & lat[0]) | ({6{sel_a_2[1]}} & lat[1]) | ({6{sel_a_2[2]}} & lat[2]) | ({6{sel_a_2[3]}} & lat[3]) | ({6{sel_a_2[4]}} & lat[4]) | ({6{sel_a_2[5]}} & lat[5]) | ({6{sel_a_2[6]}} & lat[6]) | ({6{sel_a_2[7]}} & lat[7]);
+  assign a_id[2] = ({3{sel_a_2[1]}} & 3'd1) | ({3{sel_a_2[2]}} & 3'd2) | ({3{sel_a_2[3]}} & 3'd3) | ({3{sel_a_2[4]}} & 3'd4) | ({3{sel_a_2[5]}} & 3'd5) | ({3{sel_a_2[6]}} & 3'd6) | ({3{sel_a_2[7]}} & 3'd7);
+  wire [7:0] sel_a_3;
+  assign sel_a_3[0] = member_a[0] && rank_in_group[0] == 3'd3;
+  assign sel_a_3[1] = member_a[1] && rank_in_group[1] == 3'd3;
+  assign sel_a_3[2] = member_a[2] && rank_in_group[2] == 3'd3;
+  assign sel_a_3[3] = member_a[3] && rank_in_group[3] == 3'd3;
+  assign sel_a_3[4] = member_a[4] && rank_in_group[4] == 3'd3;
+  assign sel_a_3[5] = member_a[5] && rank_in_group[5] == 3'd3;
+  assign sel_a_3[6] = member_a[6] && rank_in_group[6] == 3'd3;
+  assign sel_a_3[7] = member_a[7] && rank_in_group[7] == 3'd3;
+  assign a_lat[3] = ({6{sel_a_3[0]}} & lat[0]) | ({6{sel_a_3[1]}} & lat[1]) | ({6{sel_a_3[2]}} & lat[2]) | ({6{sel_a_3[3]}} & lat[3]) | ({6{sel_a_3[4]}} & lat[4]) | ({6{sel_a_3[5]}} & lat[5]) | ({6{sel_a_3[6]}} & lat[6]) | ({6{sel_a_3[7]}} & lat[7]);
+  assign a_id[3] = ({3{sel_a_3[1]}} & 3'd1) | ({3{sel_a_3[2]}} & 3'd2) | ({3{sel_a_3[3]}} & 3'd3) | ({3{sel_a_3[4]}} & 3'd4) | ({3{sel_a_3[5]}} & 3'd5) | ({3{sel_a_3[6]}} & 3'd6) | ({3{sel_a_3[7]}} & 3'd7);
+  wire [7:0] sel_a_4;
+  assign sel_a_4[0] = member_a[0] && rank_in_group[0] == 3'd4;
+  assign sel_a_4[1] = member_a[1] && rank_in_group[1] == 3'd4;
+  assign sel_a_4[2] = member_a[2] && rank_in_group[2] == 3'd4;
+  assign sel_a_4[3] = member_a[3] && rank_in_group[3] == 3'd4;
+  assign sel_a_4[4] = member_a[4] && rank_in_group[4] == 3'd4;
+  assign sel_a_4[5] = member_a[5] && rank_in_group[5] == 3'd4;
+  assign sel_a_4[6] = member_a[6] && rank_in_group[6] == 3'd4;
+  assign sel_a_4[7] = member_a[7] && rank_in_group[7] == 3'd4;
+  assign a_lat[4] = ({6{sel_a_4[0]}} & lat[0]) | ({6{sel_a_4[1]}} & lat[1]) | ({6{sel_a_4[2]}} & lat[2]) | ({6{sel_a_4[3]}} & lat[3]) | ({6{sel_a_4[4]}} & lat[4]) | ({6{sel_a_4[5]}} & lat[5]) | ({6{sel_a_4[6]}} & lat[6]) | ({6{sel_a_4[7]}} & lat[7]);
+  assign a_id[4] = ({3{sel_a_4[1]}} & 3'd1) | ({3{sel_a_4[2]}} & 3'd2) | ({3{sel_a_4[3]}} & 3'd3) | ({3{sel_a_4[4]}} & 3'd4) | ({3{sel_a_4[5]}} & 3'd5) | ({3{sel_a_4[6]}} & 3'd6) | ({3{sel_a_4[7]}} & 3'd7);
+  wire [7:0] sel_a_5;
+  assign sel_a_5[0] = member_a[0] && rank_in_group[0] == 3'd5;
+  assign sel_a_5[1] = member_a[1] && rank_in_group[1] == 3'd5;
+  assign sel_a_5[2] = member_a[2] && rank_in_group[2] == 3'd5;
+  assign sel_a_5[3] = member_a[3] && rank_in_group[3] == 3'd5;
+  assign sel_a_5[4] = member_a[4] && rank_in_group[4] == 3'd5;
+  assign sel_a_5[5] = member_a[5] && rank_in_group[5] == 3'd5;
+  assign sel_a_5[6] = member_a[6] && rank_in_group[6] == 3'd5;
+  assign sel_a_5[7] = member_a[7] && rank_in_group[7] == 3'd5;
+  assign a_lat[5] = ({6{sel_a_5[0]}} & lat[0]) | ({6{sel_a_5[1]}} & lat[1]) | ({6{sel_a_5[2]}} & lat[2]) | ({6{sel_a_5[3]}} & lat[3]) | ({6{sel_a_5[4]}} & lat[4]) | ({6{sel_a_5[5]}} & lat[5]) | ({6{sel_a_5[6]}} & lat[6]) | ({6{sel_a_5[7]}} & lat[7]);
+  assign a_id[5] = ({3{sel_a_5[1]}} & 3'd1) | ({3{sel_a_5[2]}} & 3'd2) | ({3{sel_a_5[3]}} & 3'd3) | ({3{sel_a_5[4]}} & 3'd4) | ({3{sel_a_5[5]}} & 3'd5) | ({3{sel_a_5[6]}} & 3'd6) | ({3{sel_a_5[7]}} & 3'd7);
+  wire [7:0] sel_a_6;
+  assign sel_a_6[0] = member_a[0] && rank_in_group[0] == 3'd6;
+  assign sel_a_6[1] = member_a[1] && rank_in_group[1] == 3'd6;
+  assign sel_a_6[2] = member_a[2] && rank_in_group[2] == 3'd6;
+  assign sel_a_6[3] = member_a[3] && rank_in_group[3] == 3'd6;
+  assign sel_a_6[4] = member_a[4] && rank_in_group[4] == 3'd6;
+  assign sel_a_6[5] = member_a[5] && rank_in_group[5] == 3'd6;
+  assign sel_a_6[6] = member_a[6] && rank_in_group[6] == 3'd6;
+  assign sel_a_6[7] = member_a[7] && rank_in_group[7] == 3'd6;
+  assign a_lat[6] = ({6{sel_a_6[0]}} & lat[0]) | ({6{sel_a_6[1]}} & lat[1]) | ({6{sel_a_6[2]}} & lat[2]) | ({6{sel_a_6[3]}} & lat[3]) | ({6{sel_a_6[4]}} & lat[4]) | ({6{sel_a_6[5]}} & lat[5]) | ({6{sel_a_6[6]}} & lat[6]) | ({6{sel_a_6[7]}} & lat[7]);
+  assign a_id[6] = ({3{sel_a_6[1]}} & 3'd1) | ({3{sel_a_6[2]}} & 3'd2) | ({3{sel_a_6[3]}} & 3'd3) | ({3{sel_a_6[4]}} & 3'd4) | ({3{sel_a_6[5]}} & 3'd5) | ({3{sel_a_6[6]}} & 3'd6) | ({3{sel_a_6[7]}} & 3'd7);
+  wire [7:0] sel_a_7;
+  assign sel_a_7[0] = member_a[0] && rank_in_group[0] == 3'd7;
+  assign sel_a_7[1] = member_a[1] && rank_in_group[1] == 3'd7;
+  assign sel_a_7[2] = member_a[2] && rank_in_group[2] == 3'd7;
+  assign sel_a_7[3] = member_a[3] && rank_in_group[3] == 3'd7;
+  assign sel_a_7[4] = member_a[4] && rank_in_group[4] == 3'd7;
+  assign sel_a_7[5] = member_a[5] && rank_in_group[5] == 3'd7;
+  assign sel_a_7[6] = member_a[6] && rank_in_group[6] == 3'd7;
+  assign sel_a_7[7] = member_a[7] && rank_in_group[7] == 3'd7;
+  assign a_lat[7] = ({6{sel_a_7[0]}} & lat[0]) | ({6{sel_a_7[1]}} & lat[1]) | ({6{sel_a_7[2]}} & lat[2]) | ({6{sel_a_7[3]}} & lat[3]) | ({6{sel_a_7[4]}} & lat[4]) | ({6{sel_a_7[5]}} & lat[5]) | ({6{sel_a_7[6]}} & lat[6]) | ({6{sel_a_7[7]}} & lat[7]);
+  assign a_id[7] = ({3{sel_a_7[1]}} & 3'd1) | ({3{sel_a_7[2]}} & 3'd2) | ({3{sel_a_7[3]}} & 3'd3) | ({3{sel_a_7[4]}} & 3'd4) | ({3{sel_a_7[5]}} & 3'd5) | ({3{sel_a_7[6]}} & 3'd6) | ({3{sel_a_7[7]}} & 3'd7);
+  wire [7:0] sel_b_0;
+  assign sel_b_0[0] = !member_a[0] && rank_in_group[0] == 3'd0;
+  assign sel_b_0[1] = !member_a[1] && rank_in_group[1] == 3'd0;
+  assign sel_b_0[2] = !member_a[2] && rank_in_group[2] == 3'd0;
+  assign sel_b_0[3] = !member_a[3] && rank_in_group[3] == 3'd0;
+  assign sel_b_0[4] = !member_a[4] && rank_in_group[4] == 3'd0;
+  assign sel_b_0[5] = !member_a[5] && rank_in_group[5] == 3'd0;
+  assign sel_b_0[6] = !member_a[6] && rank_in_group[6] == 3'd0;
+  assign sel_b_0[7] = !member_a[7] && rank_in_group[7] == 3'd0;
+  assign b_lat[0] = ({6{sel_b_0[0]}} & lat[0]) | ({6{sel_b_0[1]}} & lat[1]) | ({6{sel_b_0[2]}} & lat[2]) | ({6{sel_b_0[3]}} & lat[3]) | ({6{sel_b_0[4]}} & lat[4]) | ({6{sel_b_0[5]}} & lat[5]) | ({6{sel_b_0[6]}} & lat[6]) | ({6{sel_b_0[7]}} & lat[7]);
+  assign b_id[0] = ({3{sel_b_0[1]}} & 3'd1) | ({3{sel_b_0[2]}} & 3'd2) | ({3{sel_b_0[3]}} & 3'd3) | ({3{sel_b_0[4]}} & 3'd4) | ({3{sel_b_0[5]}} & 3'd5) | ({3{sel_b_0[6]}} & 3'd6) | ({3{sel_b_0[7]}} & 3'd7);
+  wire [7:0] sel_b_1;
+  assign sel_b_1[0] = !member_a[0] && rank_in_group[0] == 3'd1;
+  assign sel_b_1[1] = !member_a[1] && rank_in_group[1] == 3'd1;
+  assign sel_b_1[2] = !member_a[2] && rank_in_group[2] == 3'd1;
+  assign sel_b_1[3] = !member_a[3] && rank_in_group[3] == 3'd1;
+  assign sel_b_1[4] = !member_a[4] && rank_in_group[4] == 3'd1;
+  assign sel_b_1[5] = !member_a[5] && rank_in_group[5] == 3'd1;
+  assign sel_b_1[6] = !member_a[6] && rank_in_group[6] == 3'd1;
+  assign sel_b_1[7] = !member_a[7] && rank_in_group[7] == 3'd1;
+  assign b_lat[1] = ({6{sel_b_1[0]}} & lat[0]) | ({6{sel_b_1[1]}} & lat[1]) | ({6{sel_b_1[2]}} & lat[2]) | ({6{sel_b_1[3]}} & lat[3]) | ({6{sel_b_1[4]}} & lat[4]) | ({6{sel_b_1[5]}} & lat[5]) | ({6{sel_b_1[6]}} & lat[6]) | ({6{sel_b_1[7]}} & lat[7]);
+  assign b_id[1] = ({3{sel_b_1[1]}} & 3'd1) | ({3{sel_b_1[2]}} & 3'd2) | ({3{sel_b_1[3]}} & 3'd3) | ({3{sel_b_1[4]}} & 3'd4) | ({3{sel_b_1[5]}} & 3'd5) | ({3{sel_b_1[6]}} & 3'd6) | ({3{sel_b_1[7]}} & 3'd7);
+  wire [7:0] sel_b_2;
+  assign sel_b_2[0] = !member_a[0] && rank_in_group[0] == 3'd2;
+  assign sel_b_2[1] = !member_a[1] && rank_in_group[1] == 3'd2;
+  assign sel_b_2[2] = !member_a[2] && rank_in_group[2] == 3'd2;
+  assign sel_b_2[3] = !member_a[3] && rank_in_group[3] == 3'd2;
+  assign sel_b_2[4] = !member_a[4] && rank_in_group[4] == 3'd2;
+  assign sel_b_2[5] = !member_a[5] && rank_in_group[5] == 3'd2;
+  assign sel_b_2[6] = !member_a[6] && rank_in_group[6] == 3'd2;
+  assign sel_b_2[7] = !member_a[7] && rank_in_group[7] == 3'd2;
+  assign b_lat[2] = ({6{sel_b_2[0]}} & lat[0]) | ({6{sel_b_2[1]}} & lat[1]) | ({6{sel_b_2[2]}} & lat[2]) | ({6{sel_b_2[3]}} & lat[3]) | ({6{sel_b_2[4]}} & lat[4]) | ({6{sel_b_2[5]}} & lat[5]) | ({6{sel_b_2[6]}} & lat[6]) | ({6{sel_b_2[7]}} & lat[7]);
+  assign b_id[2] = ({3{sel_b_2[1]}} & 3'd1) | ({3{sel_b_2[2]}} & 3'd2) | ({3{sel_b_2[3]}} & 3'd3) | ({3{sel_b_2[4]}} & 3'd4) | ({3{sel_b_2[5]}} & 3'd5) | ({3{sel_b_2[6]}} & 3'd6) | ({3{sel_b_2[7]}} & 3'd7);
+  wire [7:0] sel_b_3;
+  assign sel_b_3[0] = !member_a[0] && rank_in_group[0] == 3'd3;
+  assign sel_b_3[1] = !member_a[1] && rank_in_group[1] == 3'd3;
+  assign sel_b_3[2] = !member_a[2] && rank_in_group[2] == 3'd3;
+  assign sel_b_3[3] = !member_a[3] && rank_in_group[3] == 3'd3;
+  assign sel_b_3[4] = !member_a[4] && rank_in_group[4] == 3'd3;
+  assign sel_b_3[5] = !member_a[5] && rank_in_group[5] == 3'd3;
+  assign sel_b_3[6] = !member_a[6] && rank_in_group[6] == 3'd3;
+  assign sel_b_3[7] = !member_a[7] && rank_in_group[7] == 3'd3;
+  assign b_lat[3] = ({6{sel_b_3[0]}} & lat[0]) | ({6{sel_b_3[1]}} & lat[1]) | ({6{sel_b_3[2]}} & lat[2]) | ({6{sel_b_3[3]}} & lat[3]) | ({6{sel_b_3[4]}} & lat[4]) | ({6{sel_b_3[5]}} & lat[5]) | ({6{sel_b_3[6]}} & lat[6]) | ({6{sel_b_3[7]}} & lat[7]);
+  assign b_id[3] = ({3{sel_b_3[1]}} & 3'd1) | ({3{sel_b_3[2]}} & 3'd2) | ({3{sel_b_3[3]}} & 3'd3) | ({3{sel_b_3[4]}} & 3'd4) | ({3{sel_b_3[5]}} & 3'd5) | ({3{sel_b_3[6]}} & 3'd6) | ({3{sel_b_3[7]}} & 3'd7);
+  wire [7:0] sel_b_4;
+  assign sel_b_4[0] = !member_a[0] && rank_in_group[0] == 3'd4;
+  assign sel_b_4[1] = !member_a[1] && rank_in_group[1] == 3'd4;
+  assign sel_b_4[2] = !member_a[2] && rank_in_group[2] == 3'd4;
+  assign sel_b_4[3] = !member_a[3] && rank_in_group[3] == 3'd4;
+  assign sel_b_4[4] = !member_a[4] && rank_in_group[4] == 3'd4;
+  assign sel_b_4[5] = !member_a[5] && rank_in_group[5] == 3'd4;
+  assign sel_b_4[6] = !member_a[6] && rank_in_group[6] == 3'd4;
+  assign sel_b_4[7] = !member_a[7] && rank_in_group[7] == 3'd4;
+  assign b_lat[4] = ({6{sel_b_4[0]}} & lat[0]) | ({6{sel_b_4[1]}} & lat[1]) | ({6{sel_b_4[2]}} & lat[2]) | ({6{sel_b_4[3]}} & lat[3]) | ({6{sel_b_4[4]}} & lat[4]) | ({6{sel_b_4[5]}} & lat[5]) | ({6{sel_b_4[6]}} & lat[6]) | ({6{sel_b_4[7]}} & lat[7]);
+  assign b_id[4] = ({3{sel_b_4[1]}} & 3'd1) | ({3{sel_b_4[2]}} & 3'd2) | ({3{sel_b_4[3]}} & 3'd3) | ({3{sel_b_4[4]}} & 3'd4) | ({3{sel_b_4[5]}} & 3'd5) | ({3{sel_b_4[6]}} & 3'd6) | ({3{sel_b_4[7]}} & 3'd7);
+  wire [7:0] sel_b_5;
+  assign sel_b_5[0] = !member_a[0] && rank_in_group[0] == 3'd5;
+  assign sel_b_5[1] = !member_a[1] && rank_in_group[1] == 3'd5;
+  assign sel_b_5[2] = !member_a[2] && rank_in_group[2] == 3'd5;
+  assign sel_b_5[3] = !member_a[3] && rank_in_group[3] == 3'd5;
+  assign sel_b_5[4] = !member_a[4] && rank_in_group[4] == 3'd5;
+  assign sel_b_5[5] = !member_a[5] && rank_in_group[5] == 3'd5;
+  assign sel_b_5[6] = !member_a[6] && rank_in_group[6] == 3'd5;
+  assign sel_b_5[7] = !member_a[7] && rank_in_group[7] == 3'd5;
+  assign b_lat[5] = ({6{sel_b_5[0]}} & lat[0]) | ({6{sel_b_5[1]}} & lat[1]) | ({6{sel_b_5[2]}} & lat[2]) | ({6{sel_b_5[3]}} & lat[3]) | ({6{sel_b_5[4]}} & lat[4]) | ({6{sel_b_5[5]}} & lat[5]) | ({6{sel_b_5[6]}} & lat[6]) | ({6{sel_b_5[7]}} & lat[7]);
+  assign b_id[5] = ({3{sel_b_5[1]}} & 3'd1) | ({3{sel_b_5[2]}} & 3'd2) | ({3{sel_b_5[3]}} & 3'd3) | ({3{sel_b_5[4]}} & 3'd4) | ({3{sel_b_5[5]}} & 3'd5) | ({3{sel_b_5[6]}} & 3'd6) | ({3{sel_b_5[7]}} & 3'd7);
+  wire [7:0] sel_b_6;
+  assign sel_b_6[0] = !member_a[0] && rank_in_group[0] == 3'd6;
+  assign sel_b_6[1] = !member_a[1] && rank_in_group[1] == 3'd6;
+  assign sel_b_6[2] = !member_a[2] && rank_in_group[2] == 3'd6;
+  assign sel_b_6[3] = !member_a[3] && rank_in_group[3] == 3'd6;
+  assign sel_b_6[4] = !member_a[4] && rank_in_group[4] == 3'd6;
+  assign sel_b_6[5] = !member_a[5] && rank_in_group[5] == 3'd6;
+  assign sel_b_6[6] = !member_a[6] && rank_in_group[6] == 3'd6;
+  assign sel_b_6[7] = !member_a[7] && rank_in_group[7] == 3'd6;
+  assign b_lat[6] = ({6{sel_b_6[0]}} & lat[0]) | ({6{sel_b_6[1]}} & lat[1]) | ({6{sel_b_6[2]}} & lat[2]) | ({6{sel_b_6[3]}} & lat[3]) | ({6{sel_b_6[4]}} & lat[4]) | ({6{sel_b_6[5]}} & lat[5]) | ({6{sel_b_6[6]}} & lat[6]) | ({6{sel_b_6[7]}} & lat[7]);
+  assign b_id[6] = ({3{sel_b_6[1]}} & 3'd1) | ({3{sel_b_6[2]}} & 3'd2) | ({3{sel_b_6[3]}} & 3'd3) | ({3{sel_b_6[4]}} & 3'd4) | ({3{sel_b_6[5]}} & 3'd5) | ({3{sel_b_6[6]}} & 3'd6) | ({3{sel_b_6[7]}} & 3'd7);
+  wire [7:0] sel_b_7;
+  assign sel_b_7[0] = !member_a[0] && rank_in_group[0] == 3'd7;
+  assign sel_b_7[1] = !member_a[1] && rank_in_group[1] == 3'd7;
+  assign sel_b_7[2] = !member_a[2] && rank_in_group[2] == 3'd7;
+  assign sel_b_7[3] = !member_a[3] && rank_in_group[3] == 3'd7;
+  assign sel_b_7[4] = !member_a[4] && rank_in_group[4] == 3'd7;
+  assign sel_b_7[5] = !member_a[5] && rank_in_group[5] == 3'd7;
+  assign sel_b_7[6] = !member_a[6] && rank_in_group[6] == 3'd7;
+  assign sel_b_7[7] = !member_a[7] && rank_in_group[7] == 3'd7;
+  assign b_lat[7] = ({6{sel_b_7[0]}} & lat[0]) | ({6{sel_b_7[1]}} & lat[1]) | ({6{sel_b_7[2]}} & lat[2]) | ({6{sel_b_7[3]}} & lat[3]) | ({6{sel_b_7[4]}} & lat[4]) | ({6{sel_b_7[5]}} & lat[5]) | ({6{sel_b_7[6]}} & lat[6]) | ({6{sel_b_7[7]}} & lat[7]);
+  assign b_id[7] = ({3{sel_b_7[1]}} & 3'd1) | ({3{sel_b_7[2]}} & 3'd2) | ({3{sel_b_7[3]}} & 3'd3) | ({3{sel_b_7[4]}} & 3'd4) | ({3{sel_b_7[5]}} & 3'd5) | ({3{sel_b_7[6]}} & 3'd6) | ({3{sel_b_7[7]}} & 3'd7);
+//
+// INTRINSIC LATENCY PREFIXES
+// ud_pa_i is the sum of the first i A latencies; ud_pb_j is the B analogue.
+// These are dependency-only completion baselines before issue conflicts add
+// waiting. Two-chain A needs four entries and B six after normalization.
+// Padded zero slots let ud_pa_4 and ud_pb_6 serve as the actual totals.
+// The single-chain engine later reuses ud_pa_4 as half of its eight-slot sum.
+//
+    wire [8:0] ud_pa_0;
+    wire [8:0] ud_pa_1;
+    wire [8:0] ud_pa_2;
+    wire [8:0] ud_pa_3;
+    wire [8:0] ud_pa_4;
+    assign ud_pa_0 = 9'd0;
+    assign ud_pa_1 = {3'd0, a_lat[0]};
+//
+// TWO-BIT GROUPED PREFIX CARRY
+// For each addition p=left XOR right and g=left AND right. Carries inside
+// each two-bit group are expanded explicitly; group boundaries feed the next
+// group. The final sum XORs p with the carry entering each bit.
+// Pair sums and earlier prefixes are shared. Nine bits cover all legal
+// totals (eight instructions at at most 50 cycles need at most 400).
+// These two-bit prefix adders are distinct from the three-bit grouped
+// subtraction equations used for signed prefix differences below.
+//
+    wire [8:0] prefix_a_pair_2_left = {3'd0, a_lat[0]};
+    wire [8:0] prefix_a_pair_2_right = {3'd0, a_lat[1]};
+    wire [8:0] prefix_a_pair_2_p = prefix_a_pair_2_left ^ prefix_a_pair_2_right;
+    wire [7:0] prefix_a_pair_2_g = prefix_a_pair_2_left[7:0] & prefix_a_pair_2_right[7:0];
+    wire prefix_a_pair_2_c0 = 1'b0;
+    wire prefix_a_pair_2_c1 = (prefix_a_pair_2_g[0]) || (prefix_a_pair_2_c0 && prefix_a_pair_2_p[0]);
+    wire prefix_a_pair_2_c2 = (prefix_a_pair_2_g[0] && prefix_a_pair_2_p[1]) || (prefix_a_pair_2_g[1]) || (prefix_a_pair_2_c0 && prefix_a_pair_2_p[0] && prefix_a_pair_2_p[1]);
+    wire prefix_a_pair_2_c3 = (prefix_a_pair_2_g[2]) || (prefix_a_pair_2_c2 && prefix_a_pair_2_p[2]);
+    wire prefix_a_pair_2_c4 = (prefix_a_pair_2_g[2] && prefix_a_pair_2_p[3]) || (prefix_a_pair_2_g[3]) || (prefix_a_pair_2_c2 && prefix_a_pair_2_p[2] && prefix_a_pair_2_p[3]);
+    wire prefix_a_pair_2_c5 = (prefix_a_pair_2_g[4]) || (prefix_a_pair_2_c4 && prefix_a_pair_2_p[4]);
+    wire prefix_a_pair_2_c6 = (prefix_a_pair_2_g[4] && prefix_a_pair_2_p[5]) || (prefix_a_pair_2_g[5]) || (prefix_a_pair_2_c4 && prefix_a_pair_2_p[4] && prefix_a_pair_2_p[5]);
+    wire prefix_a_pair_2_c7 = (prefix_a_pair_2_g[6]) || (prefix_a_pair_2_c6 && prefix_a_pair_2_p[6]);
+    wire prefix_a_pair_2_c8 = (prefix_a_pair_2_g[6] && prefix_a_pair_2_p[7]) || (prefix_a_pair_2_g[7]) || (prefix_a_pair_2_c6 && prefix_a_pair_2_p[6] && prefix_a_pair_2_p[7]);
+    wire [8:0] prefix_a_pair_2 = prefix_a_pair_2_p ^ {prefix_a_pair_2_c8, prefix_a_pair_2_c7, prefix_a_pair_2_c6, prefix_a_pair_2_c5, prefix_a_pair_2_c4, prefix_a_pair_2_c3, prefix_a_pair_2_c2, prefix_a_pair_2_c1, prefix_a_pair_2_c0};
+    wire [8:0] prefix_a_sum_2_left = ud_pa_0;
+    wire [8:0] prefix_a_sum_2_right = prefix_a_pair_2;
+    wire [8:0] prefix_a_sum_2_p = prefix_a_sum_2_left ^ prefix_a_sum_2_right;
+    wire [7:0] prefix_a_sum_2_g = prefix_a_sum_2_left[7:0] & prefix_a_sum_2_right[7:0];
+    wire prefix_a_sum_2_c0 = 1'b0;
+    wire prefix_a_sum_2_c1 = (prefix_a_sum_2_g[0]) || (prefix_a_sum_2_c0 && prefix_a_sum_2_p[0]);
+    wire prefix_a_sum_2_c2 = (prefix_a_sum_2_g[0] && prefix_a_sum_2_p[1]) || (prefix_a_sum_2_g[1]) || (prefix_a_sum_2_c0 && prefix_a_sum_2_p[0] && prefix_a_sum_2_p[1]);
+    wire prefix_a_sum_2_c3 = (prefix_a_sum_2_g[2]) || (prefix_a_sum_2_c2 && prefix_a_sum_2_p[2]);
+    wire prefix_a_sum_2_c4 = (prefix_a_sum_2_g[2] && prefix_a_sum_2_p[3]) || (prefix_a_sum_2_g[3]) || (prefix_a_sum_2_c2 && prefix_a_sum_2_p[2] && prefix_a_sum_2_p[3]);
+    wire prefix_a_sum_2_c5 = (prefix_a_sum_2_g[4]) || (prefix_a_sum_2_c4 && prefix_a_sum_2_p[4]);
+    wire prefix_a_sum_2_c6 = (prefix_a_sum_2_g[4] && prefix_a_sum_2_p[5]) || (prefix_a_sum_2_g[5]) || (prefix_a_sum_2_c4 && prefix_a_sum_2_p[4] && prefix_a_sum_2_p[5]);
+    wire prefix_a_sum_2_c7 = (prefix_a_sum_2_g[6]) || (prefix_a_sum_2_c6 && prefix_a_sum_2_p[6]);
+    wire prefix_a_sum_2_c8 = (prefix_a_sum_2_g[6] && prefix_a_sum_2_p[7]) || (prefix_a_sum_2_g[7]) || (prefix_a_sum_2_c6 && prefix_a_sum_2_p[6] && prefix_a_sum_2_p[7]);
+    wire [8:0] prefix_a_sum_2 = prefix_a_sum_2_p ^ {prefix_a_sum_2_c8, prefix_a_sum_2_c7, prefix_a_sum_2_c6, prefix_a_sum_2_c5, prefix_a_sum_2_c4, prefix_a_sum_2_c3, prefix_a_sum_2_c2, prefix_a_sum_2_c1, prefix_a_sum_2_c0};
+    assign ud_pa_2 = prefix_a_sum_2;
+    wire [8:0] prefix_a_sum_3_left = ud_pa_2;
+    wire [8:0] prefix_a_sum_3_right = {3'd0, a_lat[2]};
+    wire [8:0] prefix_a_sum_3_p = prefix_a_sum_3_left ^ prefix_a_sum_3_right;
+    wire [7:0] prefix_a_sum_3_g = prefix_a_sum_3_left[7:0] & prefix_a_sum_3_right[7:0];
+    wire prefix_a_sum_3_c0 = 1'b0;
+    wire prefix_a_sum_3_c1 = (prefix_a_sum_3_g[0]) || (prefix_a_sum_3_c0 && prefix_a_sum_3_p[0]);
+    wire prefix_a_sum_3_c2 = (prefix_a_sum_3_g[0] && prefix_a_sum_3_p[1]) || (prefix_a_sum_3_g[1]) || (prefix_a_sum_3_c0 && prefix_a_sum_3_p[0] && prefix_a_sum_3_p[1]);
+    wire prefix_a_sum_3_c3 = (prefix_a_sum_3_g[2]) || (prefix_a_sum_3_c2 && prefix_a_sum_3_p[2]);
+    wire prefix_a_sum_3_c4 = (prefix_a_sum_3_g[2] && prefix_a_sum_3_p[3]) || (prefix_a_sum_3_g[3]) || (prefix_a_sum_3_c2 && prefix_a_sum_3_p[2] && prefix_a_sum_3_p[3]);
+    wire prefix_a_sum_3_c5 = (prefix_a_sum_3_g[4]) || (prefix_a_sum_3_c4 && prefix_a_sum_3_p[4]);
+    wire prefix_a_sum_3_c6 = (prefix_a_sum_3_g[4] && prefix_a_sum_3_p[5]) || (prefix_a_sum_3_g[5]) || (prefix_a_sum_3_c4 && prefix_a_sum_3_p[4] && prefix_a_sum_3_p[5]);
+    wire prefix_a_sum_3_c7 = (prefix_a_sum_3_g[6]) || (prefix_a_sum_3_c6 && prefix_a_sum_3_p[6]);
+    wire prefix_a_sum_3_c8 = (prefix_a_sum_3_g[6] && prefix_a_sum_3_p[7]) || (prefix_a_sum_3_g[7]) || (prefix_a_sum_3_c6 && prefix_a_sum_3_p[6] && prefix_a_sum_3_p[7]);
+    wire [8:0] prefix_a_sum_3 = prefix_a_sum_3_p ^ {prefix_a_sum_3_c8, prefix_a_sum_3_c7, prefix_a_sum_3_c6, prefix_a_sum_3_c5, prefix_a_sum_3_c4, prefix_a_sum_3_c3, prefix_a_sum_3_c2, prefix_a_sum_3_c1, prefix_a_sum_3_c0};
+    assign ud_pa_3 = prefix_a_sum_3;
+    wire [8:0] prefix_a_pair_4_left = {3'd0, a_lat[2]};
+    wire [8:0] prefix_a_pair_4_right = {3'd0, a_lat[3]};
+    wire [8:0] prefix_a_pair_4_p = prefix_a_pair_4_left ^ prefix_a_pair_4_right;
+    wire [7:0] prefix_a_pair_4_g = prefix_a_pair_4_left[7:0] & prefix_a_pair_4_right[7:0];
+    wire prefix_a_pair_4_c0 = 1'b0;
+    wire prefix_a_pair_4_c1 = (prefix_a_pair_4_g[0]) || (prefix_a_pair_4_c0 && prefix_a_pair_4_p[0]);
+    wire prefix_a_pair_4_c2 = (prefix_a_pair_4_g[0] && prefix_a_pair_4_p[1]) || (prefix_a_pair_4_g[1]) || (prefix_a_pair_4_c0 && prefix_a_pair_4_p[0] && prefix_a_pair_4_p[1]);
+    wire prefix_a_pair_4_c3 = (prefix_a_pair_4_g[2]) || (prefix_a_pair_4_c2 && prefix_a_pair_4_p[2]);
+    wire prefix_a_pair_4_c4 = (prefix_a_pair_4_g[2] && prefix_a_pair_4_p[3]) || (prefix_a_pair_4_g[3]) || (prefix_a_pair_4_c2 && prefix_a_pair_4_p[2] && prefix_a_pair_4_p[3]);
+    wire prefix_a_pair_4_c5 = (prefix_a_pair_4_g[4]) || (prefix_a_pair_4_c4 && prefix_a_pair_4_p[4]);
+    wire prefix_a_pair_4_c6 = (prefix_a_pair_4_g[4] && prefix_a_pair_4_p[5]) || (prefix_a_pair_4_g[5]) || (prefix_a_pair_4_c4 && prefix_a_pair_4_p[4] && prefix_a_pair_4_p[5]);
+    wire prefix_a_pair_4_c7 = (prefix_a_pair_4_g[6]) || (prefix_a_pair_4_c6 && prefix_a_pair_4_p[6]);
+    wire prefix_a_pair_4_c8 = (prefix_a_pair_4_g[6] && prefix_a_pair_4_p[7]) || (prefix_a_pair_4_g[7]) || (prefix_a_pair_4_c6 && prefix_a_pair_4_p[6] && prefix_a_pair_4_p[7]);
+    wire [8:0] prefix_a_pair_4 = prefix_a_pair_4_p ^ {prefix_a_pair_4_c8, prefix_a_pair_4_c7, prefix_a_pair_4_c6, prefix_a_pair_4_c5, prefix_a_pair_4_c4, prefix_a_pair_4_c3, prefix_a_pair_4_c2, prefix_a_pair_4_c1, prefix_a_pair_4_c0};
+    wire [8:0] prefix_a_sum_4_left = ud_pa_2;
+    wire [8:0] prefix_a_sum_4_right = prefix_a_pair_4;
+    wire [8:0] prefix_a_sum_4_p = prefix_a_sum_4_left ^ prefix_a_sum_4_right;
+    wire [7:0] prefix_a_sum_4_g = prefix_a_sum_4_left[7:0] & prefix_a_sum_4_right[7:0];
+    wire prefix_a_sum_4_c0 = 1'b0;
+    wire prefix_a_sum_4_c1 = (prefix_a_sum_4_g[0]) || (prefix_a_sum_4_c0 && prefix_a_sum_4_p[0]);
+    wire prefix_a_sum_4_c2 = (prefix_a_sum_4_g[0] && prefix_a_sum_4_p[1]) || (prefix_a_sum_4_g[1]) || (prefix_a_sum_4_c0 && prefix_a_sum_4_p[0] && prefix_a_sum_4_p[1]);
+    wire prefix_a_sum_4_c3 = (prefix_a_sum_4_g[2]) || (prefix_a_sum_4_c2 && prefix_a_sum_4_p[2]);
+    wire prefix_a_sum_4_c4 = (prefix_a_sum_4_g[2] && prefix_a_sum_4_p[3]) || (prefix_a_sum_4_g[3]) || (prefix_a_sum_4_c2 && prefix_a_sum_4_p[2] && prefix_a_sum_4_p[3]);
+    wire prefix_a_sum_4_c5 = (prefix_a_sum_4_g[4]) || (prefix_a_sum_4_c4 && prefix_a_sum_4_p[4]);
+    wire prefix_a_sum_4_c6 = (prefix_a_sum_4_g[4] && prefix_a_sum_4_p[5]) || (prefix_a_sum_4_g[5]) || (prefix_a_sum_4_c4 && prefix_a_sum_4_p[4] && prefix_a_sum_4_p[5]);
+    wire prefix_a_sum_4_c7 = (prefix_a_sum_4_g[6]) || (prefix_a_sum_4_c6 && prefix_a_sum_4_p[6]);
+    wire prefix_a_sum_4_c8 = (prefix_a_sum_4_g[6] && prefix_a_sum_4_p[7]) || (prefix_a_sum_4_g[7]) || (prefix_a_sum_4_c6 && prefix_a_sum_4_p[6] && prefix_a_sum_4_p[7]);
+    wire [8:0] prefix_a_sum_4 = prefix_a_sum_4_p ^ {prefix_a_sum_4_c8, prefix_a_sum_4_c7, prefix_a_sum_4_c6, prefix_a_sum_4_c5, prefix_a_sum_4_c4, prefix_a_sum_4_c3, prefix_a_sum_4_c2, prefix_a_sum_4_c1, prefix_a_sum_4_c0};
+    assign ud_pa_4 = prefix_a_sum_4;
+//
+// B PREFIX BANK
+// The same prefix construction covers six B entries. No new schedule is
+// chosen here: all prefix values are shared arithmetic inputs to the DP.
+//
+    wire [8:0] ud_pb_0;
+    wire [8:0] ud_pb_1;
+    wire [8:0] ud_pb_2;
+    wire [8:0] ud_pb_3;
+    wire [8:0] ud_pb_4;
+    wire [8:0] ud_pb_5;
+    wire [8:0] ud_pb_6;
+    assign ud_pb_0 = 9'd0;
+    assign ud_pb_1 = {3'd0, b_lat[0]};
+    wire [8:0] prefix_b_pair_2_left = {3'd0, b_lat[0]};
+    wire [8:0] prefix_b_pair_2_right = {3'd0, b_lat[1]};
+    wire [8:0] prefix_b_pair_2_p = prefix_b_pair_2_left ^ prefix_b_pair_2_right;
+    wire [7:0] prefix_b_pair_2_g = prefix_b_pair_2_left[7:0] & prefix_b_pair_2_right[7:0];
+    wire prefix_b_pair_2_c0 = 1'b0;
+    wire prefix_b_pair_2_c1 = (prefix_b_pair_2_g[0]) || (prefix_b_pair_2_c0 && prefix_b_pair_2_p[0]);
+    wire prefix_b_pair_2_c2 = (prefix_b_pair_2_g[0] && prefix_b_pair_2_p[1]) || (prefix_b_pair_2_g[1]) || (prefix_b_pair_2_c0 && prefix_b_pair_2_p[0] && prefix_b_pair_2_p[1]);
+    wire prefix_b_pair_2_c3 = (prefix_b_pair_2_g[2]) || (prefix_b_pair_2_c2 && prefix_b_pair_2_p[2]);
+    wire prefix_b_pair_2_c4 = (prefix_b_pair_2_g[2] && prefix_b_pair_2_p[3]) || (prefix_b_pair_2_g[3]) || (prefix_b_pair_2_c2 && prefix_b_pair_2_p[2] && prefix_b_pair_2_p[3]);
+    wire prefix_b_pair_2_c5 = (prefix_b_pair_2_g[4]) || (prefix_b_pair_2_c4 && prefix_b_pair_2_p[4]);
+    wire prefix_b_pair_2_c6 = (prefix_b_pair_2_g[4] && prefix_b_pair_2_p[5]) || (prefix_b_pair_2_g[5]) || (prefix_b_pair_2_c4 && prefix_b_pair_2_p[4] && prefix_b_pair_2_p[5]);
+    wire prefix_b_pair_2_c7 = (prefix_b_pair_2_g[6]) || (prefix_b_pair_2_c6 && prefix_b_pair_2_p[6]);
+    wire prefix_b_pair_2_c8 = (prefix_b_pair_2_g[6] && prefix_b_pair_2_p[7]) || (prefix_b_pair_2_g[7]) || (prefix_b_pair_2_c6 && prefix_b_pair_2_p[6] && prefix_b_pair_2_p[7]);
+    wire [8:0] prefix_b_pair_2 = prefix_b_pair_2_p ^ {prefix_b_pair_2_c8, prefix_b_pair_2_c7, prefix_b_pair_2_c6, prefix_b_pair_2_c5, prefix_b_pair_2_c4, prefix_b_pair_2_c3, prefix_b_pair_2_c2, prefix_b_pair_2_c1, prefix_b_pair_2_c0};
+    wire [8:0] prefix_b_sum_2_left = ud_pb_0;
+    wire [8:0] prefix_b_sum_2_right = prefix_b_pair_2;
+    wire [8:0] prefix_b_sum_2_p = prefix_b_sum_2_left ^ prefix_b_sum_2_right;
+    wire [7:0] prefix_b_sum_2_g = prefix_b_sum_2_left[7:0] & prefix_b_sum_2_right[7:0];
+    wire prefix_b_sum_2_c0 = 1'b0;
+    wire prefix_b_sum_2_c1 = (prefix_b_sum_2_g[0]) || (prefix_b_sum_2_c0 && prefix_b_sum_2_p[0]);
+    wire prefix_b_sum_2_c2 = (prefix_b_sum_2_g[0] && prefix_b_sum_2_p[1]) || (prefix_b_sum_2_g[1]) || (prefix_b_sum_2_c0 && prefix_b_sum_2_p[0] && prefix_b_sum_2_p[1]);
+    wire prefix_b_sum_2_c3 = (prefix_b_sum_2_g[2]) || (prefix_b_sum_2_c2 && prefix_b_sum_2_p[2]);
+    wire prefix_b_sum_2_c4 = (prefix_b_sum_2_g[2] && prefix_b_sum_2_p[3]) || (prefix_b_sum_2_g[3]) || (prefix_b_sum_2_c2 && prefix_b_sum_2_p[2] && prefix_b_sum_2_p[3]);
+    wire prefix_b_sum_2_c5 = (prefix_b_sum_2_g[4]) || (prefix_b_sum_2_c4 && prefix_b_sum_2_p[4]);
+    wire prefix_b_sum_2_c6 = (prefix_b_sum_2_g[4] && prefix_b_sum_2_p[5]) || (prefix_b_sum_2_g[5]) || (prefix_b_sum_2_c4 && prefix_b_sum_2_p[4] && prefix_b_sum_2_p[5]);
+    wire prefix_b_sum_2_c7 = (prefix_b_sum_2_g[6]) || (prefix_b_sum_2_c6 && prefix_b_sum_2_p[6]);
+    wire prefix_b_sum_2_c8 = (prefix_b_sum_2_g[6] && prefix_b_sum_2_p[7]) || (prefix_b_sum_2_g[7]) || (prefix_b_sum_2_c6 && prefix_b_sum_2_p[6] && prefix_b_sum_2_p[7]);
+    wire [8:0] prefix_b_sum_2 = prefix_b_sum_2_p ^ {prefix_b_sum_2_c8, prefix_b_sum_2_c7, prefix_b_sum_2_c6, prefix_b_sum_2_c5, prefix_b_sum_2_c4, prefix_b_sum_2_c3, prefix_b_sum_2_c2, prefix_b_sum_2_c1, prefix_b_sum_2_c0};
+    assign ud_pb_2 = prefix_b_sum_2;
+    wire [8:0] prefix_b_sum_3_left = ud_pb_2;
+    wire [8:0] prefix_b_sum_3_right = {3'd0, b_lat[2]};
+    wire [8:0] prefix_b_sum_3_p = prefix_b_sum_3_left ^ prefix_b_sum_3_right;
+    wire [7:0] prefix_b_sum_3_g = prefix_b_sum_3_left[7:0] & prefix_b_sum_3_right[7:0];
+    wire prefix_b_sum_3_c0 = 1'b0;
+    wire prefix_b_sum_3_c1 = (prefix_b_sum_3_g[0]) || (prefix_b_sum_3_c0 && prefix_b_sum_3_p[0]);
+    wire prefix_b_sum_3_c2 = (prefix_b_sum_3_g[0] && prefix_b_sum_3_p[1]) || (prefix_b_sum_3_g[1]) || (prefix_b_sum_3_c0 && prefix_b_sum_3_p[0] && prefix_b_sum_3_p[1]);
+    wire prefix_b_sum_3_c3 = (prefix_b_sum_3_g[2]) || (prefix_b_sum_3_c2 && prefix_b_sum_3_p[2]);
+    wire prefix_b_sum_3_c4 = (prefix_b_sum_3_g[2] && prefix_b_sum_3_p[3]) || (prefix_b_sum_3_g[3]) || (prefix_b_sum_3_c2 && prefix_b_sum_3_p[2] && prefix_b_sum_3_p[3]);
+    wire prefix_b_sum_3_c5 = (prefix_b_sum_3_g[4]) || (prefix_b_sum_3_c4 && prefix_b_sum_3_p[4]);
+    wire prefix_b_sum_3_c6 = (prefix_b_sum_3_g[4] && prefix_b_sum_3_p[5]) || (prefix_b_sum_3_g[5]) || (prefix_b_sum_3_c4 && prefix_b_sum_3_p[4] && prefix_b_sum_3_p[5]);
+    wire prefix_b_sum_3_c7 = (prefix_b_sum_3_g[6]) || (prefix_b_sum_3_c6 && prefix_b_sum_3_p[6]);
+    wire prefix_b_sum_3_c8 = (prefix_b_sum_3_g[6] && prefix_b_sum_3_p[7]) || (prefix_b_sum_3_g[7]) || (prefix_b_sum_3_c6 && prefix_b_sum_3_p[6] && prefix_b_sum_3_p[7]);
+    wire [8:0] prefix_b_sum_3 = prefix_b_sum_3_p ^ {prefix_b_sum_3_c8, prefix_b_sum_3_c7, prefix_b_sum_3_c6, prefix_b_sum_3_c5, prefix_b_sum_3_c4, prefix_b_sum_3_c3, prefix_b_sum_3_c2, prefix_b_sum_3_c1, prefix_b_sum_3_c0};
+    assign ud_pb_3 = prefix_b_sum_3;
+    wire [8:0] prefix_b_pair_4_left = {3'd0, b_lat[2]};
+    wire [8:0] prefix_b_pair_4_right = {3'd0, b_lat[3]};
+    wire [8:0] prefix_b_pair_4_p = prefix_b_pair_4_left ^ prefix_b_pair_4_right;
+    wire [7:0] prefix_b_pair_4_g = prefix_b_pair_4_left[7:0] & prefix_b_pair_4_right[7:0];
+    wire prefix_b_pair_4_c0 = 1'b0;
+    wire prefix_b_pair_4_c1 = (prefix_b_pair_4_g[0]) || (prefix_b_pair_4_c0 && prefix_b_pair_4_p[0]);
+    wire prefix_b_pair_4_c2 = (prefix_b_pair_4_g[0] && prefix_b_pair_4_p[1]) || (prefix_b_pair_4_g[1]) || (prefix_b_pair_4_c0 && prefix_b_pair_4_p[0] && prefix_b_pair_4_p[1]);
+    wire prefix_b_pair_4_c3 = (prefix_b_pair_4_g[2]) || (prefix_b_pair_4_c2 && prefix_b_pair_4_p[2]);
+    wire prefix_b_pair_4_c4 = (prefix_b_pair_4_g[2] && prefix_b_pair_4_p[3]) || (prefix_b_pair_4_g[3]) || (prefix_b_pair_4_c2 && prefix_b_pair_4_p[2] && prefix_b_pair_4_p[3]);
+    wire prefix_b_pair_4_c5 = (prefix_b_pair_4_g[4]) || (prefix_b_pair_4_c4 && prefix_b_pair_4_p[4]);
+    wire prefix_b_pair_4_c6 = (prefix_b_pair_4_g[4] && prefix_b_pair_4_p[5]) || (prefix_b_pair_4_g[5]) || (prefix_b_pair_4_c4 && prefix_b_pair_4_p[4] && prefix_b_pair_4_p[5]);
+    wire prefix_b_pair_4_c7 = (prefix_b_pair_4_g[6]) || (prefix_b_pair_4_c6 && prefix_b_pair_4_p[6]);
+    wire prefix_b_pair_4_c8 = (prefix_b_pair_4_g[6] && prefix_b_pair_4_p[7]) || (prefix_b_pair_4_g[7]) || (prefix_b_pair_4_c6 && prefix_b_pair_4_p[6] && prefix_b_pair_4_p[7]);
+    wire [8:0] prefix_b_pair_4 = prefix_b_pair_4_p ^ {prefix_b_pair_4_c8, prefix_b_pair_4_c7, prefix_b_pair_4_c6, prefix_b_pair_4_c5, prefix_b_pair_4_c4, prefix_b_pair_4_c3, prefix_b_pair_4_c2, prefix_b_pair_4_c1, prefix_b_pair_4_c0};
+    wire [8:0] prefix_b_sum_4_left = ud_pb_2;
+    wire [8:0] prefix_b_sum_4_right = prefix_b_pair_4;
+    wire [8:0] prefix_b_sum_4_p = prefix_b_sum_4_left ^ prefix_b_sum_4_right;
+    wire [7:0] prefix_b_sum_4_g = prefix_b_sum_4_left[7:0] & prefix_b_sum_4_right[7:0];
+    wire prefix_b_sum_4_c0 = 1'b0;
+    wire prefix_b_sum_4_c1 = (prefix_b_sum_4_g[0]) || (prefix_b_sum_4_c0 && prefix_b_sum_4_p[0]);
+    wire prefix_b_sum_4_c2 = (prefix_b_sum_4_g[0] && prefix_b_sum_4_p[1]) || (prefix_b_sum_4_g[1]) || (prefix_b_sum_4_c0 && prefix_b_sum_4_p[0] && prefix_b_sum_4_p[1]);
+    wire prefix_b_sum_4_c3 = (prefix_b_sum_4_g[2]) || (prefix_b_sum_4_c2 && prefix_b_sum_4_p[2]);
+    wire prefix_b_sum_4_c4 = (prefix_b_sum_4_g[2] && prefix_b_sum_4_p[3]) || (prefix_b_sum_4_g[3]) || (prefix_b_sum_4_c2 && prefix_b_sum_4_p[2] && prefix_b_sum_4_p[3]);
+    wire prefix_b_sum_4_c5 = (prefix_b_sum_4_g[4]) || (prefix_b_sum_4_c4 && prefix_b_sum_4_p[4]);
+    wire prefix_b_sum_4_c6 = (prefix_b_sum_4_g[4] && prefix_b_sum_4_p[5]) || (prefix_b_sum_4_g[5]) || (prefix_b_sum_4_c4 && prefix_b_sum_4_p[4] && prefix_b_sum_4_p[5]);
+    wire prefix_b_sum_4_c7 = (prefix_b_sum_4_g[6]) || (prefix_b_sum_4_c6 && prefix_b_sum_4_p[6]);
+    wire prefix_b_sum_4_c8 = (prefix_b_sum_4_g[6] && prefix_b_sum_4_p[7]) || (prefix_b_sum_4_g[7]) || (prefix_b_sum_4_c6 && prefix_b_sum_4_p[6] && prefix_b_sum_4_p[7]);
+    wire [8:0] prefix_b_sum_4 = prefix_b_sum_4_p ^ {prefix_b_sum_4_c8, prefix_b_sum_4_c7, prefix_b_sum_4_c6, prefix_b_sum_4_c5, prefix_b_sum_4_c4, prefix_b_sum_4_c3, prefix_b_sum_4_c2, prefix_b_sum_4_c1, prefix_b_sum_4_c0};
+    assign ud_pb_4 = prefix_b_sum_4;
+    wire [8:0] prefix_b_sum_5_left = ud_pb_4;
+    wire [8:0] prefix_b_sum_5_right = {3'd0, b_lat[4]};
+    wire [8:0] prefix_b_sum_5_p = prefix_b_sum_5_left ^ prefix_b_sum_5_right;
+    wire [7:0] prefix_b_sum_5_g = prefix_b_sum_5_left[7:0] & prefix_b_sum_5_right[7:0];
+    wire prefix_b_sum_5_c0 = 1'b0;
+    wire prefix_b_sum_5_c1 = (prefix_b_sum_5_g[0]) || (prefix_b_sum_5_c0 && prefix_b_sum_5_p[0]);
+    wire prefix_b_sum_5_c2 = (prefix_b_sum_5_g[0] && prefix_b_sum_5_p[1]) || (prefix_b_sum_5_g[1]) || (prefix_b_sum_5_c0 && prefix_b_sum_5_p[0] && prefix_b_sum_5_p[1]);
+    wire prefix_b_sum_5_c3 = (prefix_b_sum_5_g[2]) || (prefix_b_sum_5_c2 && prefix_b_sum_5_p[2]);
+    wire prefix_b_sum_5_c4 = (prefix_b_sum_5_g[2] && prefix_b_sum_5_p[3]) || (prefix_b_sum_5_g[3]) || (prefix_b_sum_5_c2 && prefix_b_sum_5_p[2] && prefix_b_sum_5_p[3]);
+    wire prefix_b_sum_5_c5 = (prefix_b_sum_5_g[4]) || (prefix_b_sum_5_c4 && prefix_b_sum_5_p[4]);
+    wire prefix_b_sum_5_c6 = (prefix_b_sum_5_g[4] && prefix_b_sum_5_p[5]) || (prefix_b_sum_5_g[5]) || (prefix_b_sum_5_c4 && prefix_b_sum_5_p[4] && prefix_b_sum_5_p[5]);
+    wire prefix_b_sum_5_c7 = (prefix_b_sum_5_g[6]) || (prefix_b_sum_5_c6 && prefix_b_sum_5_p[6]);
+    wire prefix_b_sum_5_c8 = (prefix_b_sum_5_g[6] && prefix_b_sum_5_p[7]) || (prefix_b_sum_5_g[7]) || (prefix_b_sum_5_c6 && prefix_b_sum_5_p[6] && prefix_b_sum_5_p[7]);
+    wire [8:0] prefix_b_sum_5 = prefix_b_sum_5_p ^ {prefix_b_sum_5_c8, prefix_b_sum_5_c7, prefix_b_sum_5_c6, prefix_b_sum_5_c5, prefix_b_sum_5_c4, prefix_b_sum_5_c3, prefix_b_sum_5_c2, prefix_b_sum_5_c1, prefix_b_sum_5_c0};
+    assign ud_pb_5 = prefix_b_sum_5;
+    wire [8:0] prefix_b_pair_6_left = {3'd0, b_lat[4]};
+    wire [8:0] prefix_b_pair_6_right = {3'd0, b_lat[5]};
+    wire [8:0] prefix_b_pair_6_p = prefix_b_pair_6_left ^ prefix_b_pair_6_right;
+    wire [7:0] prefix_b_pair_6_g = prefix_b_pair_6_left[7:0] & prefix_b_pair_6_right[7:0];
+    wire prefix_b_pair_6_c0 = 1'b0;
+    wire prefix_b_pair_6_c1 = (prefix_b_pair_6_g[0]) || (prefix_b_pair_6_c0 && prefix_b_pair_6_p[0]);
+    wire prefix_b_pair_6_c2 = (prefix_b_pair_6_g[0] && prefix_b_pair_6_p[1]) || (prefix_b_pair_6_g[1]) || (prefix_b_pair_6_c0 && prefix_b_pair_6_p[0] && prefix_b_pair_6_p[1]);
+    wire prefix_b_pair_6_c3 = (prefix_b_pair_6_g[2]) || (prefix_b_pair_6_c2 && prefix_b_pair_6_p[2]);
+    wire prefix_b_pair_6_c4 = (prefix_b_pair_6_g[2] && prefix_b_pair_6_p[3]) || (prefix_b_pair_6_g[3]) || (prefix_b_pair_6_c2 && prefix_b_pair_6_p[2] && prefix_b_pair_6_p[3]);
+    wire prefix_b_pair_6_c5 = (prefix_b_pair_6_g[4]) || (prefix_b_pair_6_c4 && prefix_b_pair_6_p[4]);
+    wire prefix_b_pair_6_c6 = (prefix_b_pair_6_g[4] && prefix_b_pair_6_p[5]) || (prefix_b_pair_6_g[5]) || (prefix_b_pair_6_c4 && prefix_b_pair_6_p[4] && prefix_b_pair_6_p[5]);
+    wire prefix_b_pair_6_c7 = (prefix_b_pair_6_g[6]) || (prefix_b_pair_6_c6 && prefix_b_pair_6_p[6]);
+    wire prefix_b_pair_6_c8 = (prefix_b_pair_6_g[6] && prefix_b_pair_6_p[7]) || (prefix_b_pair_6_g[7]) || (prefix_b_pair_6_c6 && prefix_b_pair_6_p[6] && prefix_b_pair_6_p[7]);
+    wire [8:0] prefix_b_pair_6 = prefix_b_pair_6_p ^ {prefix_b_pair_6_c8, prefix_b_pair_6_c7, prefix_b_pair_6_c6, prefix_b_pair_6_c5, prefix_b_pair_6_c4, prefix_b_pair_6_c3, prefix_b_pair_6_c2, prefix_b_pair_6_c1, prefix_b_pair_6_c0};
+    wire [8:0] prefix_b_sum_6_left = ud_pb_4;
+    wire [8:0] prefix_b_sum_6_right = prefix_b_pair_6;
+    wire [8:0] prefix_b_sum_6_p = prefix_b_sum_6_left ^ prefix_b_sum_6_right;
+    wire [7:0] prefix_b_sum_6_g = prefix_b_sum_6_left[7:0] & prefix_b_sum_6_right[7:0];
+    wire prefix_b_sum_6_c0 = 1'b0;
+    wire prefix_b_sum_6_c1 = (prefix_b_sum_6_g[0]) || (prefix_b_sum_6_c0 && prefix_b_sum_6_p[0]);
+    wire prefix_b_sum_6_c2 = (prefix_b_sum_6_g[0] && prefix_b_sum_6_p[1]) || (prefix_b_sum_6_g[1]) || (prefix_b_sum_6_c0 && prefix_b_sum_6_p[0] && prefix_b_sum_6_p[1]);
+    wire prefix_b_sum_6_c3 = (prefix_b_sum_6_g[2]) || (prefix_b_sum_6_c2 && prefix_b_sum_6_p[2]);
+    wire prefix_b_sum_6_c4 = (prefix_b_sum_6_g[2] && prefix_b_sum_6_p[3]) || (prefix_b_sum_6_g[3]) || (prefix_b_sum_6_c2 && prefix_b_sum_6_p[2] && prefix_b_sum_6_p[3]);
+    wire prefix_b_sum_6_c5 = (prefix_b_sum_6_g[4]) || (prefix_b_sum_6_c4 && prefix_b_sum_6_p[4]);
+    wire prefix_b_sum_6_c6 = (prefix_b_sum_6_g[4] && prefix_b_sum_6_p[5]) || (prefix_b_sum_6_g[5]) || (prefix_b_sum_6_c4 && prefix_b_sum_6_p[4] && prefix_b_sum_6_p[5]);
+    wire prefix_b_sum_6_c7 = (prefix_b_sum_6_g[6]) || (prefix_b_sum_6_c6 && prefix_b_sum_6_p[6]);
+    wire prefix_b_sum_6_c8 = (prefix_b_sum_6_g[6] && prefix_b_sum_6_p[7]) || (prefix_b_sum_6_g[7]) || (prefix_b_sum_6_c6 && prefix_b_sum_6_p[6] && prefix_b_sum_6_p[7]);
+    wire [8:0] prefix_b_sum_6 = prefix_b_sum_6_p ^ {prefix_b_sum_6_c8, prefix_b_sum_6_c7, prefix_b_sum_6_c6, prefix_b_sum_6_c5, prefix_b_sum_6_c4, prefix_b_sum_6_c3, prefix_b_sum_6_c2, prefix_b_sum_6_c1, prefix_b_sum_6_c0};
+    assign ud_pb_6 = prefix_b_sum_6;
+//
+// TWO-CHAIN BOUNDED-WAIT THRESHOLD DP
+// A state (i,j,d) covers i issued A entries, j issued B entries, and an
+// A-waiting allowance d. Its q_e bits represent the least attainable B
+// waiting as thresholds: q_e is true when that waiting is at most e.
+// A lower B waiting dominates a higher one under the same prefix and budget.
+// Budgets need only d=0..j and B thresholds e=0..i: issue conflicts can be
+// resolved through these bounded frontiers. The final four-extra-cycle
+// theorem does not justify truncating these per-chain budgets further.
+// Axes and the (1,1) first-issue conflict are folded into literal constants
+// in this unrolled source. Each later state considers append-A, append-B,
+// and (when d>0) the best witness already feasible at budget d-1.
+// Names ud_i_j_d_* identify the prefix counts and A budget. aq/bq are the
+// append alternatives; best_q and best_mask carry the retained frontier.
+// A mask bit of 1 selects A, 0 selects B, with the earliest issue in bit 0.
+// Appending a new instruction therefore adds its bit at the high end.
+//
+  wire [8:0] ud_1_2_diff_cla_p = ud_pa_0 ^ ~ud_pb_1;
+  wire [8:0] ud_1_2_diff_cla_g = ud_pa_0 & ~ud_pb_1;
+  wire ud_1_2_diff_cla_c0 = 1'b1;
+  wire ud_1_2_diff_cla_c1 = (ud_1_2_diff_cla_g[0]) || (ud_1_2_diff_cla_c0 && ud_1_2_diff_cla_p[0]);
+  wire ud_1_2_diff_cla_c2 = (ud_1_2_diff_cla_g[0] && ud_1_2_diff_cla_p[1]) || (ud_1_2_diff_cla_g[1]) || (ud_1_2_diff_cla_c0 && ud_1_2_diff_cla_p[0] && ud_1_2_diff_cla_p[1]);
+  wire ud_1_2_diff_cla_c3 = (ud_1_2_diff_cla_g[0] && ud_1_2_diff_cla_p[1] && ud_1_2_diff_cla_p[2]) || (ud_1_2_diff_cla_g[1] && ud_1_2_diff_cla_p[2]) || (ud_1_2_diff_cla_g[2]) || (ud_1_2_diff_cla_c0 && ud_1_2_diff_cla_p[0] && ud_1_2_diff_cla_p[1] && ud_1_2_diff_cla_p[2]);
+  wire ud_1_2_diff_cla_c4 = (ud_1_2_diff_cla_g[3]) || (ud_1_2_diff_cla_c3 && ud_1_2_diff_cla_p[3]);
+  wire ud_1_2_diff_cla_c5 = (ud_1_2_diff_cla_g[3] && ud_1_2_diff_cla_p[4]) || (ud_1_2_diff_cla_g[4]) || (ud_1_2_diff_cla_c3 && ud_1_2_diff_cla_p[3] && ud_1_2_diff_cla_p[4]);
+  wire ud_1_2_diff_cla_c6 = (ud_1_2_diff_cla_g[3] && ud_1_2_diff_cla_p[4] && ud_1_2_diff_cla_p[5]) || (ud_1_2_diff_cla_g[4] && ud_1_2_diff_cla_p[5]) || (ud_1_2_diff_cla_g[5]) || (ud_1_2_diff_cla_c3 && ud_1_2_diff_cla_p[3] && ud_1_2_diff_cla_p[4] && ud_1_2_diff_cla_p[5]);
+  wire ud_1_2_diff_cla_c7 = (ud_1_2_diff_cla_g[6]) || (ud_1_2_diff_cla_c6 && ud_1_2_diff_cla_p[6]);
+  wire ud_1_2_diff_cla_c8 = (ud_1_2_diff_cla_g[6] && ud_1_2_diff_cla_p[7]) || (ud_1_2_diff_cla_g[7]) || (ud_1_2_diff_cla_c6 && ud_1_2_diff_cla_p[6] && ud_1_2_diff_cla_p[7]);
+  wire ud_1_2_diff_cla_c9 = (ud_1_2_diff_cla_g[6] && ud_1_2_diff_cla_p[7] && ud_1_2_diff_cla_p[8]) || (ud_1_2_diff_cla_g[7] && ud_1_2_diff_cla_p[8]) || (ud_1_2_diff_cla_g[8]) || (ud_1_2_diff_cla_c6 && ud_1_2_diff_cla_p[6] && ud_1_2_diff_cla_p[7] && ud_1_2_diff_cla_p[8]);
+  wire [9:0] ud_1_2_diff = {!ud_1_2_diff_cla_c9, (ud_1_2_diff_cla_p ^ {ud_1_2_diff_cla_c8, ud_1_2_diff_cla_c7, ud_1_2_diff_cla_c6, ud_1_2_diff_cla_c5, ud_1_2_diff_cla_c4, ud_1_2_diff_cla_c3, ud_1_2_diff_cla_c2, ud_1_2_diff_cla_c1, ud_1_2_diff_cla_c0})};
+//
+// SHARED SIGNED DIFFERENCE PREDICATES
+// Each prefix pair computes PA[i-1]-PB[j-1] in a 10-bit two's-complement
+// representation. The subtractor forms x + ~y + 1 and uses inverted carry
+// out as the sign bit. ge_k tests difference >= k; ge_mk means >= -k.
+// Only small constant thresholds are needed. Inspect the sign/high bits
+// and compare three low bits instead of repeating a wide comparison.
+// For append-A, a B threshold e is usable when difference >= e+1-d.
+// For append-B, the test is difference < e-d. Cumulative ORs encode minima.
+//
+  wire ud_1_2_ge_1 = !ud_1_2_diff[9] && ((|ud_1_2_diff[8:3]) || ud_1_2_diff[2:0] >= 3'd1);
+//
+// ZERO-BUDGET BOUNDARY
+// This first emitted example is (i,j,d)=(1,2,0). Both chains cannot begin
+// at cycle zero, so some score entries are compile-time constants.
+// With no d-1 candidate the A/B choice is emitted as a best_right site.
+// It retains right-on-tie in this source. Do not infer its tie policy from
+// the inner bestr_right sites used when a previous budget also exists.
+//
+  wire ud_1_2_0_aq0 = (1'b1 && ud_1_2_ge_1);
+  wire ud_1_2_ge_0 = !ud_1_2_diff[9];
+  wire ud_1_2_0_bq0 = 1'b0 && !ud_1_2_ge_0;
+  wire ud_1_2_0_bq1 = 1'b1 && !ud_1_2_ge_1;
+  wire ud_1_2_0_best_right = !((ud_1_2_0_aq0 && !ud_1_2_0_bq0) | (ud_1_2_0_aq0 && !ud_1_2_0_bq1));
+  wire [2:0] ud_1_2_0_best_mask = ud_1_2_0_best_right ? {1'b0, 2'b01} : {1'b1, 2'd0};
+  wire ud_1_2_1_aq0 = (1'b1 && ud_1_2_ge_0);
+  wire ud_1_2_ge_m1 = !ud_1_2_diff[9] || ((&ud_1_2_diff[8:3]) && ud_1_2_diff[2:0] >= 3'd7);
+  wire ud_1_2_1_bq0 = 1'b1 && !ud_1_2_ge_m1;
+  wire ud_1_2_1_bq1 = 1'b1 && !ud_1_2_ge_0;
+  wire ud_1_2_1_bestr_q0 = ud_1_2_1_aq0 || ud_1_2_1_bq0;
+  wire ud_1_2_1_bestr_q1 = ud_1_2_1_aq0 || ud_1_2_1_bq1;
+//
+// SELECTED INNER A/B TIE POLICY
+// A monotone threshold score improves when it introduces any newly true bit.
+// The strict test below selects B only if B has such a bit beyond A;
+// A wins equal inner scores at bestr_right sites. Outer budget merges
+// use a separate right-on-tie rule.
+//
+  wire ud_1_2_1_bestr_right = (ud_1_2_1_bq0 && !ud_1_2_1_aq0) | (ud_1_2_1_bq1 && !ud_1_2_1_aq0);
+  wire [2:0] ud_1_2_1_bestr_mask = ud_1_2_1_bestr_right ? {1'b0, 2'b10} : {1'b1, 2'd0};
+  wire ud_1_2_1_best_q0 = 1'b0 || ud_1_2_1_bestr_q0;
+//
+// OUTER BUDGET MERGE
+// Compare the inherited d-1 frontier on the left with the new A/B frontier
+// on the right. Here the negated left-improvement test chooses the right
+// witness on a tie. Boolean OR combines feasibility; the selected mask
+// must attain the retained minimum. Tie policy affects witness circuitry
+// even though the optimum completion value is unchanged.
+//
+  wire ud_1_2_1_best_right = !((1'b0 && !ud_1_2_1_bestr_q0) | (1'b1 && !ud_1_2_1_bestr_q1));
+  wire [2:0] ud_1_2_1_best_mask = ud_1_2_1_best_right ? ud_1_2_1_bestr_mask : ud_1_2_0_best_mask;
+  wire ud_1_2_2_aq0 = (1'b1 && ud_1_2_ge_m1);
+  wire ud_1_2_2_best_right = !((ud_1_2_1_best_q0 && !ud_1_2_2_aq0) | (1'b1 && !ud_1_2_2_aq0));
+  wire [2:0] ud_1_2_2_best_mask = ud_1_2_2_best_right ? {1'b1, 2'd0} : ud_1_2_1_best_mask;
+//
+// DP PREFIX (1,3): share one signed prefix difference across
+// all A-waiting budgets d=0..3; each retained mask has 4 issue bits.
+//
+  wire [8:0] ud_1_3_diff_cla_p = ud_pa_0 ^ ~ud_pb_2;
+  wire [8:0] ud_1_3_diff_cla_g = ud_pa_0 & ~ud_pb_2;
+  wire ud_1_3_diff_cla_c0 = 1'b1;
+  wire ud_1_3_diff_cla_c1 = (ud_1_3_diff_cla_g[0]) || (ud_1_3_diff_cla_c0 && ud_1_3_diff_cla_p[0]);
+  wire ud_1_3_diff_cla_c2 = (ud_1_3_diff_cla_g[0] && ud_1_3_diff_cla_p[1]) || (ud_1_3_diff_cla_g[1]) || (ud_1_3_diff_cla_c0 && ud_1_3_diff_cla_p[0] && ud_1_3_diff_cla_p[1]);
+  wire ud_1_3_diff_cla_c3 = (ud_1_3_diff_cla_g[0] && ud_1_3_diff_cla_p[1] && ud_1_3_diff_cla_p[2]) || (ud_1_3_diff_cla_g[1] && ud_1_3_diff_cla_p[2]) || (ud_1_3_diff_cla_g[2]) || (ud_1_3_diff_cla_c0 && ud_1_3_diff_cla_p[0] && ud_1_3_diff_cla_p[1] && ud_1_3_diff_cla_p[2]);
+  wire ud_1_3_diff_cla_c4 = (ud_1_3_diff_cla_g[3]) || (ud_1_3_diff_cla_c3 && ud_1_3_diff_cla_p[3]);
+  wire ud_1_3_diff_cla_c5 = (ud_1_3_diff_cla_g[3] && ud_1_3_diff_cla_p[4]) || (ud_1_3_diff_cla_g[4]) || (ud_1_3_diff_cla_c3 && ud_1_3_diff_cla_p[3] && ud_1_3_diff_cla_p[4]);
+  wire ud_1_3_diff_cla_c6 = (ud_1_3_diff_cla_g[3] && ud_1_3_diff_cla_p[4] && ud_1_3_diff_cla_p[5]) || (ud_1_3_diff_cla_g[4] && ud_1_3_diff_cla_p[5]) || (ud_1_3_diff_cla_g[5]) || (ud_1_3_diff_cla_c3 && ud_1_3_diff_cla_p[3] && ud_1_3_diff_cla_p[4] && ud_1_3_diff_cla_p[5]);
+  wire ud_1_3_diff_cla_c7 = (ud_1_3_diff_cla_g[6]) || (ud_1_3_diff_cla_c6 && ud_1_3_diff_cla_p[6]);
+  wire ud_1_3_diff_cla_c8 = (ud_1_3_diff_cla_g[6] && ud_1_3_diff_cla_p[7]) || (ud_1_3_diff_cla_g[7]) || (ud_1_3_diff_cla_c6 && ud_1_3_diff_cla_p[6] && ud_1_3_diff_cla_p[7]);
+  wire ud_1_3_diff_cla_c9 = (ud_1_3_diff_cla_g[6] && ud_1_3_diff_cla_p[7] && ud_1_3_diff_cla_p[8]) || (ud_1_3_diff_cla_g[7] && ud_1_3_diff_cla_p[8]) || (ud_1_3_diff_cla_g[8]) || (ud_1_3_diff_cla_c6 && ud_1_3_diff_cla_p[6] && ud_1_3_diff_cla_p[7] && ud_1_3_diff_cla_p[8]);
+  wire [9:0] ud_1_3_diff = {!ud_1_3_diff_cla_c9, (ud_1_3_diff_cla_p ^ {ud_1_3_diff_cla_c8, ud_1_3_diff_cla_c7, ud_1_3_diff_cla_c6, ud_1_3_diff_cla_c5, ud_1_3_diff_cla_c4, ud_1_3_diff_cla_c3, ud_1_3_diff_cla_c2, ud_1_3_diff_cla_c1, ud_1_3_diff_cla_c0})};
+  wire ud_1_3_ge_1 = !ud_1_3_diff[9] && ((|ud_1_3_diff[8:3]) || ud_1_3_diff[2:0] >= 3'd1);
+  wire ud_1_3_0_aq0 = (1'b1 && ud_1_3_ge_1);
+  wire ud_1_3_ge_0 = !ud_1_3_diff[9];
+  wire ud_1_3_0_bq0 = 1'b0 && !ud_1_3_ge_0;
+  wire ud_1_3_0_bq1 = 1'b1 && !ud_1_3_ge_1;
+  wire ud_1_3_0_best_right = !((ud_1_3_0_aq0 && !ud_1_3_0_bq0) | (ud_1_3_0_aq0 && !ud_1_3_0_bq1));
+  wire [3:0] ud_1_3_0_best_mask = ud_1_3_0_best_right ? {1'b0, ud_1_2_0_best_mask} : {1'b1, 3'd0};
+  wire ud_1_3_1_aq0 = (1'b1 && ud_1_3_ge_0);
+  wire ud_1_3_ge_m1 = !ud_1_3_diff[9] || ((&ud_1_3_diff[8:3]) && ud_1_3_diff[2:0] >= 3'd7);
+  wire ud_1_3_1_bq0 = ud_1_2_1_best_q0 && !ud_1_3_ge_m1;
+  wire ud_1_3_1_bq1 = 1'b1 && !ud_1_3_ge_0;
+  wire ud_1_3_1_bestr_q0 = ud_1_3_1_aq0 || ud_1_3_1_bq0;
+  wire ud_1_3_1_bestr_q1 = ud_1_3_1_aq0 || ud_1_3_1_bq1;
+  wire ud_1_3_1_bestr_right = (ud_1_3_1_bq0 && !ud_1_3_1_aq0) | (ud_1_3_1_bq1 && !ud_1_3_1_aq0);
+  wire [3:0] ud_1_3_1_bestr_mask = ud_1_3_1_bestr_right ? {1'b0, ud_1_2_1_best_mask} : {1'b1, 3'd0};
+  wire ud_1_3_1_best_q0 = 1'b0 || ud_1_3_1_bestr_q0;
+  wire ud_1_3_1_best_right = !((1'b0 && !ud_1_3_1_bestr_q0) | (1'b1 && !ud_1_3_1_bestr_q1));
+  wire [3:0] ud_1_3_1_best_mask = ud_1_3_1_best_right ? ud_1_3_1_bestr_mask : ud_1_3_0_best_mask;
+  wire ud_1_3_2_aq0 = (1'b1 && ud_1_3_ge_m1);
+  wire ud_1_3_ge_m2 = !ud_1_3_diff[9] || ((&ud_1_3_diff[8:3]) && ud_1_3_diff[2:0] >= 3'd6);
+  wire ud_1_3_2_bq0 = 1'b1 && !ud_1_3_ge_m2;
+  wire ud_1_3_2_bq1 = 1'b1 && !ud_1_3_ge_m1;
+  wire ud_1_3_2_bestr_q0 = ud_1_3_2_aq0 || ud_1_3_2_bq0;
+  wire ud_1_3_2_bestr_q1 = ud_1_3_2_aq0 || ud_1_3_2_bq1;
+  wire ud_1_3_2_bestr_right = (ud_1_3_2_bq0 && !ud_1_3_2_aq0) | (ud_1_3_2_bq1 && !ud_1_3_2_aq0);
+  wire [3:0] ud_1_3_2_bestr_mask = ud_1_3_2_bestr_right ? {1'b0, ud_1_2_2_best_mask} : {1'b1, 3'd0};
+  wire ud_1_3_2_best_q0 = ud_1_3_1_best_q0 || ud_1_3_2_bestr_q0;
+  wire ud_1_3_2_best_right = !((ud_1_3_1_best_q0 && !ud_1_3_2_bestr_q0) | (1'b1 && !ud_1_3_2_bestr_q1));
+  wire [3:0] ud_1_3_2_best_mask = ud_1_3_2_best_right ? ud_1_3_2_bestr_mask : ud_1_3_1_best_mask;
+  wire ud_1_3_3_aq0 = (1'b1 && ud_1_3_ge_m2);
+  wire ud_1_3_3_best_right = !((ud_1_3_2_best_q0 && !ud_1_3_3_aq0) | (1'b1 && !ud_1_3_3_aq0));
+  wire [3:0] ud_1_3_3_best_mask = ud_1_3_3_best_right ? {1'b1, 3'd0} : ud_1_3_2_best_mask;
+//
+// DP PREFIX (1,4): share one signed prefix difference across
+// all A-waiting budgets d=0..4; each retained mask has 5 issue bits.
+//
+  wire [8:0] ud_1_4_diff_cla_p = ud_pa_0 ^ ~ud_pb_3;
+  wire [8:0] ud_1_4_diff_cla_g = ud_pa_0 & ~ud_pb_3;
+  wire ud_1_4_diff_cla_c0 = 1'b1;
+  wire ud_1_4_diff_cla_c1 = (ud_1_4_diff_cla_g[0]) || (ud_1_4_diff_cla_c0 && ud_1_4_diff_cla_p[0]);
+  wire ud_1_4_diff_cla_c2 = (ud_1_4_diff_cla_g[0] && ud_1_4_diff_cla_p[1]) || (ud_1_4_diff_cla_g[1]) || (ud_1_4_diff_cla_c0 && ud_1_4_diff_cla_p[0] && ud_1_4_diff_cla_p[1]);
+  wire ud_1_4_diff_cla_c3 = (ud_1_4_diff_cla_g[0] && ud_1_4_diff_cla_p[1] && ud_1_4_diff_cla_p[2]) || (ud_1_4_diff_cla_g[1] && ud_1_4_diff_cla_p[2]) || (ud_1_4_diff_cla_g[2]) || (ud_1_4_diff_cla_c0 && ud_1_4_diff_cla_p[0] && ud_1_4_diff_cla_p[1] && ud_1_4_diff_cla_p[2]);
+  wire ud_1_4_diff_cla_c4 = (ud_1_4_diff_cla_g[3]) || (ud_1_4_diff_cla_c3 && ud_1_4_diff_cla_p[3]);
+  wire ud_1_4_diff_cla_c5 = (ud_1_4_diff_cla_g[3] && ud_1_4_diff_cla_p[4]) || (ud_1_4_diff_cla_g[4]) || (ud_1_4_diff_cla_c3 && ud_1_4_diff_cla_p[3] && ud_1_4_diff_cla_p[4]);
+  wire ud_1_4_diff_cla_c6 = (ud_1_4_diff_cla_g[3] && ud_1_4_diff_cla_p[4] && ud_1_4_diff_cla_p[5]) || (ud_1_4_diff_cla_g[4] && ud_1_4_diff_cla_p[5]) || (ud_1_4_diff_cla_g[5]) || (ud_1_4_diff_cla_c3 && ud_1_4_diff_cla_p[3] && ud_1_4_diff_cla_p[4] && ud_1_4_diff_cla_p[5]);
+  wire ud_1_4_diff_cla_c7 = (ud_1_4_diff_cla_g[6]) || (ud_1_4_diff_cla_c6 && ud_1_4_diff_cla_p[6]);
+  wire ud_1_4_diff_cla_c8 = (ud_1_4_diff_cla_g[6] && ud_1_4_diff_cla_p[7]) || (ud_1_4_diff_cla_g[7]) || (ud_1_4_diff_cla_c6 && ud_1_4_diff_cla_p[6] && ud_1_4_diff_cla_p[7]);
+  wire ud_1_4_diff_cla_c9 = (ud_1_4_diff_cla_g[6] && ud_1_4_diff_cla_p[7] && ud_1_4_diff_cla_p[8]) || (ud_1_4_diff_cla_g[7] && ud_1_4_diff_cla_p[8]) || (ud_1_4_diff_cla_g[8]) || (ud_1_4_diff_cla_c6 && ud_1_4_diff_cla_p[6] && ud_1_4_diff_cla_p[7] && ud_1_4_diff_cla_p[8]);
+  wire [9:0] ud_1_4_diff = {!ud_1_4_diff_cla_c9, (ud_1_4_diff_cla_p ^ {ud_1_4_diff_cla_c8, ud_1_4_diff_cla_c7, ud_1_4_diff_cla_c6, ud_1_4_diff_cla_c5, ud_1_4_diff_cla_c4, ud_1_4_diff_cla_c3, ud_1_4_diff_cla_c2, ud_1_4_diff_cla_c1, ud_1_4_diff_cla_c0})};
+  wire ud_1_4_ge_1 = !ud_1_4_diff[9] && ((|ud_1_4_diff[8:3]) || ud_1_4_diff[2:0] >= 3'd1);
+  wire ud_1_4_0_aq0 = (1'b1 && ud_1_4_ge_1);
+  wire ud_1_4_ge_0 = !ud_1_4_diff[9];
+  wire ud_1_4_0_bq0 = 1'b0 && !ud_1_4_ge_0;
+  wire ud_1_4_0_bq1 = 1'b1 && !ud_1_4_ge_1;
+  wire ud_1_4_0_best_right = !((ud_1_4_0_aq0 && !ud_1_4_0_bq0) | (ud_1_4_0_aq0 && !ud_1_4_0_bq1));
+  wire [4:0] ud_1_4_0_best_mask = ud_1_4_0_best_right ? {1'b0, ud_1_3_0_best_mask} : {1'b1, 4'd0};
+  wire ud_1_4_1_aq0 = (1'b1 && ud_1_4_ge_0);
+  wire ud_1_4_ge_m1 = !ud_1_4_diff[9] || ((&ud_1_4_diff[8:3]) && ud_1_4_diff[2:0] >= 3'd7);
+  wire ud_1_4_1_bq0 = ud_1_3_1_best_q0 && !ud_1_4_ge_m1;
+  wire ud_1_4_1_bq1 = 1'b1 && !ud_1_4_ge_0;
+  wire ud_1_4_1_bestr_q0 = ud_1_4_1_aq0 || ud_1_4_1_bq0;
+  wire ud_1_4_1_bestr_q1 = ud_1_4_1_aq0 || ud_1_4_1_bq1;
+  wire ud_1_4_1_bestr_right = (ud_1_4_1_bq0 && !ud_1_4_1_aq0) | (ud_1_4_1_bq1 && !ud_1_4_1_aq0);
+  wire [4:0] ud_1_4_1_bestr_mask = ud_1_4_1_bestr_right ? {1'b0, ud_1_3_1_best_mask} : {1'b1, 4'd0};
+  wire ud_1_4_1_best_q0 = 1'b0 || ud_1_4_1_bestr_q0;
+  wire ud_1_4_1_best_right = !((1'b0 && !ud_1_4_1_bestr_q0) | (1'b1 && !ud_1_4_1_bestr_q1));
+  wire [4:0] ud_1_4_1_best_mask = ud_1_4_1_best_right ? ud_1_4_1_bestr_mask : ud_1_4_0_best_mask;
+  wire ud_1_4_2_aq0 = (1'b1 && ud_1_4_ge_m1);
+  wire ud_1_4_ge_m2 = !ud_1_4_diff[9] || ((&ud_1_4_diff[8:3]) && ud_1_4_diff[2:0] >= 3'd6);
+  wire ud_1_4_2_bq0 = ud_1_3_2_best_q0 && !ud_1_4_ge_m2;
+  wire ud_1_4_2_bq1 = 1'b1 && !ud_1_4_ge_m1;
+  wire ud_1_4_2_bestr_q0 = ud_1_4_2_aq0 || ud_1_4_2_bq0;
+  wire ud_1_4_2_bestr_q1 = ud_1_4_2_aq0 || ud_1_4_2_bq1;
+  wire ud_1_4_2_bestr_right = (ud_1_4_2_bq0 && !ud_1_4_2_aq0) | (ud_1_4_2_bq1 && !ud_1_4_2_aq0);
+  wire [4:0] ud_1_4_2_bestr_mask = ud_1_4_2_bestr_right ? {1'b0, ud_1_3_2_best_mask} : {1'b1, 4'd0};
+  wire ud_1_4_2_best_q0 = ud_1_4_1_best_q0 || ud_1_4_2_bestr_q0;
+  wire ud_1_4_2_best_right = !((ud_1_4_1_best_q0 && !ud_1_4_2_bestr_q0) | (1'b1 && !ud_1_4_2_bestr_q1));
+  wire [4:0] ud_1_4_2_best_mask = ud_1_4_2_best_right ? ud_1_4_2_bestr_mask : ud_1_4_1_best_mask;
+  wire ud_1_4_3_aq0 = (1'b1 && ud_1_4_ge_m2);
+  wire ud_1_4_ge_m3 = !ud_1_4_diff[9] || ((&ud_1_4_diff[8:3]) && ud_1_4_diff[2:0] >= 3'd5);
+  wire ud_1_4_3_bq0 = 1'b1 && !ud_1_4_ge_m3;
+  wire ud_1_4_3_bq1 = 1'b1 && !ud_1_4_ge_m2;
+  wire ud_1_4_3_bestr_q0 = ud_1_4_3_aq0 || ud_1_4_3_bq0;
+  wire ud_1_4_3_bestr_q1 = ud_1_4_3_aq0 || ud_1_4_3_bq1;
+  wire ud_1_4_3_bestr_right = (ud_1_4_3_bq0 && !ud_1_4_3_aq0) | (ud_1_4_3_bq1 && !ud_1_4_3_aq0);
+  wire [4:0] ud_1_4_3_bestr_mask = ud_1_4_3_bestr_right ? {1'b0, ud_1_3_3_best_mask} : {1'b1, 4'd0};
+  wire ud_1_4_3_best_q0 = ud_1_4_2_best_q0 || ud_1_4_3_bestr_q0;
+  wire ud_1_4_3_best_right = !((ud_1_4_2_best_q0 && !ud_1_4_3_bestr_q0) | (1'b1 && !ud_1_4_3_bestr_q1));
+  wire [4:0] ud_1_4_3_best_mask = ud_1_4_3_best_right ? ud_1_4_3_bestr_mask : ud_1_4_2_best_mask;
+  wire ud_1_4_4_aq0 = (1'b1 && ud_1_4_ge_m3);
+  wire ud_1_4_4_best_right = !((ud_1_4_3_best_q0 && !ud_1_4_4_aq0) | (1'b1 && !ud_1_4_4_aq0));
+  wire [4:0] ud_1_4_4_best_mask = ud_1_4_4_best_right ? {1'b1, 4'd0} : ud_1_4_3_best_mask;
+//
+// DP PREFIX (1,5): share one signed prefix difference across
+// all A-waiting budgets d=0..5; each retained mask has 6 issue bits.
+//
+  wire [8:0] ud_1_5_diff_cla_p = ud_pa_0 ^ ~ud_pb_4;
+  wire [8:0] ud_1_5_diff_cla_g = ud_pa_0 & ~ud_pb_4;
+  wire ud_1_5_diff_cla_c0 = 1'b1;
+  wire ud_1_5_diff_cla_c1 = (ud_1_5_diff_cla_g[0]) || (ud_1_5_diff_cla_c0 && ud_1_5_diff_cla_p[0]);
+  wire ud_1_5_diff_cla_c2 = (ud_1_5_diff_cla_g[0] && ud_1_5_diff_cla_p[1]) || (ud_1_5_diff_cla_g[1]) || (ud_1_5_diff_cla_c0 && ud_1_5_diff_cla_p[0] && ud_1_5_diff_cla_p[1]);
+  wire ud_1_5_diff_cla_c3 = (ud_1_5_diff_cla_g[0] && ud_1_5_diff_cla_p[1] && ud_1_5_diff_cla_p[2]) || (ud_1_5_diff_cla_g[1] && ud_1_5_diff_cla_p[2]) || (ud_1_5_diff_cla_g[2]) || (ud_1_5_diff_cla_c0 && ud_1_5_diff_cla_p[0] && ud_1_5_diff_cla_p[1] && ud_1_5_diff_cla_p[2]);
+  wire ud_1_5_diff_cla_c4 = (ud_1_5_diff_cla_g[3]) || (ud_1_5_diff_cla_c3 && ud_1_5_diff_cla_p[3]);
+  wire ud_1_5_diff_cla_c5 = (ud_1_5_diff_cla_g[3] && ud_1_5_diff_cla_p[4]) || (ud_1_5_diff_cla_g[4]) || (ud_1_5_diff_cla_c3 && ud_1_5_diff_cla_p[3] && ud_1_5_diff_cla_p[4]);
+  wire ud_1_5_diff_cla_c6 = (ud_1_5_diff_cla_g[3] && ud_1_5_diff_cla_p[4] && ud_1_5_diff_cla_p[5]) || (ud_1_5_diff_cla_g[4] && ud_1_5_diff_cla_p[5]) || (ud_1_5_diff_cla_g[5]) || (ud_1_5_diff_cla_c3 && ud_1_5_diff_cla_p[3] && ud_1_5_diff_cla_p[4] && ud_1_5_diff_cla_p[5]);
+  wire ud_1_5_diff_cla_c7 = (ud_1_5_diff_cla_g[6]) || (ud_1_5_diff_cla_c6 && ud_1_5_diff_cla_p[6]);
+  wire ud_1_5_diff_cla_c8 = (ud_1_5_diff_cla_g[6] && ud_1_5_diff_cla_p[7]) || (ud_1_5_diff_cla_g[7]) || (ud_1_5_diff_cla_c6 && ud_1_5_diff_cla_p[6] && ud_1_5_diff_cla_p[7]);
+  wire ud_1_5_diff_cla_c9 = (ud_1_5_diff_cla_g[6] && ud_1_5_diff_cla_p[7] && ud_1_5_diff_cla_p[8]) || (ud_1_5_diff_cla_g[7] && ud_1_5_diff_cla_p[8]) || (ud_1_5_diff_cla_g[8]) || (ud_1_5_diff_cla_c6 && ud_1_5_diff_cla_p[6] && ud_1_5_diff_cla_p[7] && ud_1_5_diff_cla_p[8]);
+  wire [9:0] ud_1_5_diff = {!ud_1_5_diff_cla_c9, (ud_1_5_diff_cla_p ^ {ud_1_5_diff_cla_c8, ud_1_5_diff_cla_c7, ud_1_5_diff_cla_c6, ud_1_5_diff_cla_c5, ud_1_5_diff_cla_c4, ud_1_5_diff_cla_c3, ud_1_5_diff_cla_c2, ud_1_5_diff_cla_c1, ud_1_5_diff_cla_c0})};
+  wire ud_1_5_ge_1 = !ud_1_5_diff[9] && ((|ud_1_5_diff[8:3]) || ud_1_5_diff[2:0] >= 3'd1);
+  wire ud_1_5_0_aq0 = (1'b1 && ud_1_5_ge_1);
+  wire ud_1_5_ge_0 = !ud_1_5_diff[9];
+  wire ud_1_5_0_bq0 = 1'b0 && !ud_1_5_ge_0;
+  wire ud_1_5_0_bq1 = 1'b1 && !ud_1_5_ge_1;
+  wire ud_1_5_0_best_right = !((ud_1_5_0_aq0 && !ud_1_5_0_bq0) | (ud_1_5_0_aq0 && !ud_1_5_0_bq1));
+  wire [5:0] ud_1_5_0_best_mask = ud_1_5_0_best_right ? {1'b0, ud_1_4_0_best_mask} : {1'b1, 5'd0};
+  wire ud_1_5_1_aq0 = (1'b1 && ud_1_5_ge_0);
+  wire ud_1_5_ge_m1 = !ud_1_5_diff[9] || ((&ud_1_5_diff[8:3]) && ud_1_5_diff[2:0] >= 3'd7);
+  wire ud_1_5_1_bq0 = ud_1_4_1_best_q0 && !ud_1_5_ge_m1;
+  wire ud_1_5_1_bq1 = 1'b1 && !ud_1_5_ge_0;
+  wire ud_1_5_1_bestr_q0 = ud_1_5_1_aq0 || ud_1_5_1_bq0;
+  wire ud_1_5_1_bestr_q1 = ud_1_5_1_aq0 || ud_1_5_1_bq1;
+  wire ud_1_5_1_bestr_right = (ud_1_5_1_bq0 && !ud_1_5_1_aq0) | (ud_1_5_1_bq1 && !ud_1_5_1_aq0);
+  wire [5:0] ud_1_5_1_bestr_mask = ud_1_5_1_bestr_right ? {1'b0, ud_1_4_1_best_mask} : {1'b1, 5'd0};
+  wire ud_1_5_1_best_q0 = 1'b0 || ud_1_5_1_bestr_q0;
+  wire ud_1_5_1_best_right = !((1'b0 && !ud_1_5_1_bestr_q0) | (1'b1 && !ud_1_5_1_bestr_q1));
+  wire [5:0] ud_1_5_1_best_mask = ud_1_5_1_best_right ? ud_1_5_1_bestr_mask : ud_1_5_0_best_mask;
+  wire ud_1_5_2_aq0 = (1'b1 && ud_1_5_ge_m1);
+  wire ud_1_5_ge_m2 = !ud_1_5_diff[9] || ((&ud_1_5_diff[8:3]) && ud_1_5_diff[2:0] >= 3'd6);
+  wire ud_1_5_2_bq0 = ud_1_4_2_best_q0 && !ud_1_5_ge_m2;
+  wire ud_1_5_2_bq1 = 1'b1 && !ud_1_5_ge_m1;
+  wire ud_1_5_2_bestr_q0 = ud_1_5_2_aq0 || ud_1_5_2_bq0;
+  wire ud_1_5_2_bestr_q1 = ud_1_5_2_aq0 || ud_1_5_2_bq1;
+  wire ud_1_5_2_bestr_right = (ud_1_5_2_bq0 && !ud_1_5_2_aq0) | (ud_1_5_2_bq1 && !ud_1_5_2_aq0);
+  wire [5:0] ud_1_5_2_bestr_mask = ud_1_5_2_bestr_right ? {1'b0, ud_1_4_2_best_mask} : {1'b1, 5'd0};
+  wire ud_1_5_2_best_q0 = ud_1_5_1_best_q0 || ud_1_5_2_bestr_q0;
+  wire ud_1_5_2_best_right = !((ud_1_5_1_best_q0 && !ud_1_5_2_bestr_q0) | (1'b1 && !ud_1_5_2_bestr_q1));
+  wire [5:0] ud_1_5_2_best_mask = ud_1_5_2_best_right ? ud_1_5_2_bestr_mask : ud_1_5_1_best_mask;
+  wire ud_1_5_3_aq0 = (1'b1 && ud_1_5_ge_m2);
+  wire ud_1_5_ge_m3 = !ud_1_5_diff[9] || ((&ud_1_5_diff[8:3]) && ud_1_5_diff[2:0] >= 3'd5);
+  wire ud_1_5_3_bq0 = ud_1_4_3_best_q0 && !ud_1_5_ge_m3;
+  wire ud_1_5_3_bq1 = 1'b1 && !ud_1_5_ge_m2;
+  wire ud_1_5_3_bestr_q0 = ud_1_5_3_aq0 || ud_1_5_3_bq0;
+  wire ud_1_5_3_bestr_q1 = ud_1_5_3_aq0 || ud_1_5_3_bq1;
+  wire ud_1_5_3_bestr_right = (ud_1_5_3_bq0 && !ud_1_5_3_aq0) | (ud_1_5_3_bq1 && !ud_1_5_3_aq0);
+  wire [5:0] ud_1_5_3_bestr_mask = ud_1_5_3_bestr_right ? {1'b0, ud_1_4_3_best_mask} : {1'b1, 5'd0};
+  wire ud_1_5_3_best_q0 = ud_1_5_2_best_q0 || ud_1_5_3_bestr_q0;
+  wire ud_1_5_3_best_right = !((ud_1_5_2_best_q0 && !ud_1_5_3_bestr_q0) | (1'b1 && !ud_1_5_3_bestr_q1));
+  wire [5:0] ud_1_5_3_best_mask = ud_1_5_3_best_right ? ud_1_5_3_bestr_mask : ud_1_5_2_best_mask;
+  wire ud_1_5_4_aq0 = (1'b1 && ud_1_5_ge_m3);
+  wire ud_1_5_ge_m4 = !ud_1_5_diff[9] || ((&ud_1_5_diff[8:3]) && ud_1_5_diff[2:0] >= 3'd4);
+  wire ud_1_5_4_bq0 = 1'b1 && !ud_1_5_ge_m4;
+  wire ud_1_5_4_bq1 = 1'b1 && !ud_1_5_ge_m3;
+  wire ud_1_5_4_bestr_q0 = ud_1_5_4_aq0 || ud_1_5_4_bq0;
+  wire ud_1_5_4_bestr_q1 = ud_1_5_4_aq0 || ud_1_5_4_bq1;
+  wire ud_1_5_4_bestr_right = (ud_1_5_4_bq0 && !ud_1_5_4_aq0) | (ud_1_5_4_bq1 && !ud_1_5_4_aq0);
+  wire [5:0] ud_1_5_4_bestr_mask = ud_1_5_4_bestr_right ? {1'b0, ud_1_4_4_best_mask} : {1'b1, 5'd0};
+  wire ud_1_5_4_best_q0 = ud_1_5_3_best_q0 || ud_1_5_4_bestr_q0;
+  wire ud_1_5_4_best_right = !((ud_1_5_3_best_q0 && !ud_1_5_4_bestr_q0) | (1'b1 && !ud_1_5_4_bestr_q1));
+  wire [5:0] ud_1_5_4_best_mask = ud_1_5_4_best_right ? ud_1_5_4_bestr_mask : ud_1_5_3_best_mask;
+  wire ud_1_5_5_aq0 = (1'b1 && ud_1_5_ge_m4);
+  wire ud_1_5_5_best_right = !((ud_1_5_4_best_q0 && !ud_1_5_5_aq0) | (1'b1 && !ud_1_5_5_aq0));
+  wire [5:0] ud_1_5_5_best_mask = ud_1_5_5_best_right ? {1'b1, 5'd0} : ud_1_5_4_best_mask;
+//
+// DP PREFIX (1,6): share one signed prefix difference across
+// all A-waiting budgets d=0..6; each retained mask has 7 issue bits.
+//
+  wire [8:0] ud_1_6_diff_cla_p = ud_pa_0 ^ ~ud_pb_5;
+  wire [8:0] ud_1_6_diff_cla_g = ud_pa_0 & ~ud_pb_5;
+  wire ud_1_6_diff_cla_c0 = 1'b1;
+  wire ud_1_6_diff_cla_c1 = (ud_1_6_diff_cla_g[0]) || (ud_1_6_diff_cla_c0 && ud_1_6_diff_cla_p[0]);
+  wire ud_1_6_diff_cla_c2 = (ud_1_6_diff_cla_g[0] && ud_1_6_diff_cla_p[1]) || (ud_1_6_diff_cla_g[1]) || (ud_1_6_diff_cla_c0 && ud_1_6_diff_cla_p[0] && ud_1_6_diff_cla_p[1]);
+  wire ud_1_6_diff_cla_c3 = (ud_1_6_diff_cla_g[0] && ud_1_6_diff_cla_p[1] && ud_1_6_diff_cla_p[2]) || (ud_1_6_diff_cla_g[1] && ud_1_6_diff_cla_p[2]) || (ud_1_6_diff_cla_g[2]) || (ud_1_6_diff_cla_c0 && ud_1_6_diff_cla_p[0] && ud_1_6_diff_cla_p[1] && ud_1_6_diff_cla_p[2]);
+  wire ud_1_6_diff_cla_c4 = (ud_1_6_diff_cla_g[3]) || (ud_1_6_diff_cla_c3 && ud_1_6_diff_cla_p[3]);
+  wire ud_1_6_diff_cla_c5 = (ud_1_6_diff_cla_g[3] && ud_1_6_diff_cla_p[4]) || (ud_1_6_diff_cla_g[4]) || (ud_1_6_diff_cla_c3 && ud_1_6_diff_cla_p[3] && ud_1_6_diff_cla_p[4]);
+  wire ud_1_6_diff_cla_c6 = (ud_1_6_diff_cla_g[3] && ud_1_6_diff_cla_p[4] && ud_1_6_diff_cla_p[5]) || (ud_1_6_diff_cla_g[4] && ud_1_6_diff_cla_p[5]) || (ud_1_6_diff_cla_g[5]) || (ud_1_6_diff_cla_c3 && ud_1_6_diff_cla_p[3] && ud_1_6_diff_cla_p[4] && ud_1_6_diff_cla_p[5]);
+  wire ud_1_6_diff_cla_c7 = (ud_1_6_diff_cla_g[6]) || (ud_1_6_diff_cla_c6 && ud_1_6_diff_cla_p[6]);
+  wire ud_1_6_diff_cla_c8 = (ud_1_6_diff_cla_g[6] && ud_1_6_diff_cla_p[7]) || (ud_1_6_diff_cla_g[7]) || (ud_1_6_diff_cla_c6 && ud_1_6_diff_cla_p[6] && ud_1_6_diff_cla_p[7]);
+  wire ud_1_6_diff_cla_c9 = (ud_1_6_diff_cla_g[6] && ud_1_6_diff_cla_p[7] && ud_1_6_diff_cla_p[8]) || (ud_1_6_diff_cla_g[7] && ud_1_6_diff_cla_p[8]) || (ud_1_6_diff_cla_g[8]) || (ud_1_6_diff_cla_c6 && ud_1_6_diff_cla_p[6] && ud_1_6_diff_cla_p[7] && ud_1_6_diff_cla_p[8]);
+  wire [9:0] ud_1_6_diff = {!ud_1_6_diff_cla_c9, (ud_1_6_diff_cla_p ^ {ud_1_6_diff_cla_c8, ud_1_6_diff_cla_c7, ud_1_6_diff_cla_c6, ud_1_6_diff_cla_c5, ud_1_6_diff_cla_c4, ud_1_6_diff_cla_c3, ud_1_6_diff_cla_c2, ud_1_6_diff_cla_c1, ud_1_6_diff_cla_c0})};
+  wire ud_1_6_ge_1 = !ud_1_6_diff[9] && ((|ud_1_6_diff[8:3]) || ud_1_6_diff[2:0] >= 3'd1);
+  wire ud_1_6_0_aq0 = (1'b1 && ud_1_6_ge_1);
+  wire ud_1_6_ge_0 = !ud_1_6_diff[9];
+  wire ud_1_6_0_bq0 = 1'b0 && !ud_1_6_ge_0;
+  wire ud_1_6_0_bq1 = 1'b1 && !ud_1_6_ge_1;
+  wire ud_1_6_0_best_right = !((ud_1_6_0_aq0 && !ud_1_6_0_bq0) | (ud_1_6_0_aq0 && !ud_1_6_0_bq1));
+  wire [6:0] ud_1_6_0_best_mask = ud_1_6_0_best_right ? {1'b0, ud_1_5_0_best_mask} : {1'b1, 6'd0};
+  wire ud_1_6_1_aq0 = (1'b1 && ud_1_6_ge_0);
+  wire ud_1_6_ge_m1 = !ud_1_6_diff[9] || ((&ud_1_6_diff[8:3]) && ud_1_6_diff[2:0] >= 3'd7);
+  wire ud_1_6_1_bq0 = ud_1_5_1_best_q0 && !ud_1_6_ge_m1;
+  wire ud_1_6_1_bq1 = 1'b1 && !ud_1_6_ge_0;
+  wire ud_1_6_1_bestr_q0 = ud_1_6_1_aq0 || ud_1_6_1_bq0;
+  wire ud_1_6_1_bestr_q1 = ud_1_6_1_aq0 || ud_1_6_1_bq1;
+  wire ud_1_6_1_bestr_right = (ud_1_6_1_bq0 && !ud_1_6_1_aq0) | (ud_1_6_1_bq1 && !ud_1_6_1_aq0);
+  wire [6:0] ud_1_6_1_bestr_mask = ud_1_6_1_bestr_right ? {1'b0, ud_1_5_1_best_mask} : {1'b1, 6'd0};
+  wire ud_1_6_1_best_q0 = 1'b0 || ud_1_6_1_bestr_q0;
+  wire ud_1_6_1_best_right = !((1'b0 && !ud_1_6_1_bestr_q0) | (1'b1 && !ud_1_6_1_bestr_q1));
+  wire [6:0] ud_1_6_1_best_mask = ud_1_6_1_best_right ? ud_1_6_1_bestr_mask : ud_1_6_0_best_mask;
+  wire ud_1_6_2_aq0 = (1'b1 && ud_1_6_ge_m1);
+  wire ud_1_6_ge_m2 = !ud_1_6_diff[9] || ((&ud_1_6_diff[8:3]) && ud_1_6_diff[2:0] >= 3'd6);
+  wire ud_1_6_2_bq0 = ud_1_5_2_best_q0 && !ud_1_6_ge_m2;
+  wire ud_1_6_2_bq1 = 1'b1 && !ud_1_6_ge_m1;
+  wire ud_1_6_2_bestr_q0 = ud_1_6_2_aq0 || ud_1_6_2_bq0;
+  wire ud_1_6_2_bestr_q1 = ud_1_6_2_aq0 || ud_1_6_2_bq1;
+  wire ud_1_6_2_bestr_right = (ud_1_6_2_bq0 && !ud_1_6_2_aq0) | (ud_1_6_2_bq1 && !ud_1_6_2_aq0);
+  wire [6:0] ud_1_6_2_bestr_mask = ud_1_6_2_bestr_right ? {1'b0, ud_1_5_2_best_mask} : {1'b1, 6'd0};
+  wire ud_1_6_2_best_q0 = ud_1_6_1_best_q0 || ud_1_6_2_bestr_q0;
+  wire ud_1_6_2_best_right = !((ud_1_6_1_best_q0 && !ud_1_6_2_bestr_q0) | (1'b1 && !ud_1_6_2_bestr_q1));
+  wire [6:0] ud_1_6_2_best_mask = ud_1_6_2_best_right ? ud_1_6_2_bestr_mask : ud_1_6_1_best_mask;
+  wire ud_1_6_3_aq0 = (1'b1 && ud_1_6_ge_m2);
+  wire ud_1_6_ge_m3 = !ud_1_6_diff[9] || ((&ud_1_6_diff[8:3]) && ud_1_6_diff[2:0] >= 3'd5);
+  wire ud_1_6_3_bq0 = ud_1_5_3_best_q0 && !ud_1_6_ge_m3;
+  wire ud_1_6_3_bq1 = 1'b1 && !ud_1_6_ge_m2;
+  wire ud_1_6_3_bestr_q0 = ud_1_6_3_aq0 || ud_1_6_3_bq0;
+  wire ud_1_6_3_bestr_q1 = ud_1_6_3_aq0 || ud_1_6_3_bq1;
+  wire ud_1_6_3_bestr_right = (ud_1_6_3_bq0 && !ud_1_6_3_aq0) | (ud_1_6_3_bq1 && !ud_1_6_3_aq0);
+  wire [6:0] ud_1_6_3_bestr_mask = ud_1_6_3_bestr_right ? {1'b0, ud_1_5_3_best_mask} : {1'b1, 6'd0};
+  wire ud_1_6_3_best_q0 = ud_1_6_2_best_q0 || ud_1_6_3_bestr_q0;
+  wire ud_1_6_3_best_right = !((ud_1_6_2_best_q0 && !ud_1_6_3_bestr_q0) | (1'b1 && !ud_1_6_3_bestr_q1));
+  wire [6:0] ud_1_6_3_best_mask = ud_1_6_3_best_right ? ud_1_6_3_bestr_mask : ud_1_6_2_best_mask;
+  wire ud_1_6_4_aq0 = (1'b1 && ud_1_6_ge_m3);
+  wire ud_1_6_ge_m4 = !ud_1_6_diff[9] || ((&ud_1_6_diff[8:3]) && ud_1_6_diff[2:0] >= 3'd4);
+  wire ud_1_6_4_bq0 = ud_1_5_4_best_q0 && !ud_1_6_ge_m4;
+  wire ud_1_6_4_bq1 = 1'b1 && !ud_1_6_ge_m3;
+  wire ud_1_6_4_bestr_q0 = ud_1_6_4_aq0 || ud_1_6_4_bq0;
+  wire ud_1_6_4_bestr_q1 = ud_1_6_4_aq0 || ud_1_6_4_bq1;
+  wire ud_1_6_4_bestr_right = (ud_1_6_4_bq0 && !ud_1_6_4_aq0) | (ud_1_6_4_bq1 && !ud_1_6_4_aq0);
+  wire [6:0] ud_1_6_4_bestr_mask = ud_1_6_4_bestr_right ? {1'b0, ud_1_5_4_best_mask} : {1'b1, 6'd0};
+  wire ud_1_6_4_best_q0 = ud_1_6_3_best_q0 || ud_1_6_4_bestr_q0;
+  wire ud_1_6_4_best_right = !((ud_1_6_3_best_q0 && !ud_1_6_4_bestr_q0) | (1'b1 && !ud_1_6_4_bestr_q1));
+  wire [6:0] ud_1_6_4_best_mask = ud_1_6_4_best_right ? ud_1_6_4_bestr_mask : ud_1_6_3_best_mask;
+  wire ud_1_6_5_aq0 = (1'b1 && ud_1_6_ge_m4);
+  wire ud_1_6_ge_m5 = !ud_1_6_diff[9] || ((&ud_1_6_diff[8:3]) && ud_1_6_diff[2:0] >= 3'd3);
+  wire ud_1_6_5_bq0 = 1'b1 && !ud_1_6_ge_m5;
+  wire ud_1_6_5_bq1 = 1'b1 && !ud_1_6_ge_m4;
+  wire ud_1_6_5_bestr_q0 = ud_1_6_5_aq0 || ud_1_6_5_bq0;
+  wire ud_1_6_5_bestr_q1 = ud_1_6_5_aq0 || ud_1_6_5_bq1;
+  wire ud_1_6_5_bestr_right = (ud_1_6_5_bq0 && !ud_1_6_5_aq0) | (ud_1_6_5_bq1 && !ud_1_6_5_aq0);
+  wire [6:0] ud_1_6_5_bestr_mask = ud_1_6_5_bestr_right ? {1'b0, ud_1_5_5_best_mask} : {1'b1, 6'd0};
+  wire ud_1_6_5_best_q0 = ud_1_6_4_best_q0 || ud_1_6_5_bestr_q0;
+  wire ud_1_6_5_best_right = !((ud_1_6_4_best_q0 && !ud_1_6_5_bestr_q0) | (1'b1 && !ud_1_6_5_bestr_q1));
+  wire [6:0] ud_1_6_5_best_mask = ud_1_6_5_best_right ? ud_1_6_5_bestr_mask : ud_1_6_4_best_mask;
+  wire ud_1_6_6_aq0 = (1'b1 && ud_1_6_ge_m5);
+  wire ud_1_6_6_best_right = !((ud_1_6_5_best_q0 && !ud_1_6_6_aq0) | (1'b1 && !ud_1_6_6_aq0));
+  wire [6:0] ud_1_6_6_best_mask = ud_1_6_6_best_right ? {1'b1, 6'd0} : ud_1_6_5_best_mask;
+//
+// DP PREFIX (2,1): share one signed prefix difference across
+// all A-waiting budgets d=0..1; each retained mask has 3 issue bits.
+//
+  wire [8:0] ud_2_1_diff_cla_p = ud_pa_1 ^ ~ud_pb_0;
+  wire [8:0] ud_2_1_diff_cla_g = ud_pa_1 & ~ud_pb_0;
+  wire ud_2_1_diff_cla_c0 = 1'b1;
+  wire ud_2_1_diff_cla_c1 = (ud_2_1_diff_cla_g[0]) || (ud_2_1_diff_cla_c0 && ud_2_1_diff_cla_p[0]);
+  wire ud_2_1_diff_cla_c2 = (ud_2_1_diff_cla_g[0] && ud_2_1_diff_cla_p[1]) || (ud_2_1_diff_cla_g[1]) || (ud_2_1_diff_cla_c0 && ud_2_1_diff_cla_p[0] && ud_2_1_diff_cla_p[1]);
+  wire ud_2_1_diff_cla_c3 = (ud_2_1_diff_cla_g[0] && ud_2_1_diff_cla_p[1] && ud_2_1_diff_cla_p[2]) || (ud_2_1_diff_cla_g[1] && ud_2_1_diff_cla_p[2]) || (ud_2_1_diff_cla_g[2]) || (ud_2_1_diff_cla_c0 && ud_2_1_diff_cla_p[0] && ud_2_1_diff_cla_p[1] && ud_2_1_diff_cla_p[2]);
+  wire ud_2_1_diff_cla_c4 = (ud_2_1_diff_cla_g[3]) || (ud_2_1_diff_cla_c3 && ud_2_1_diff_cla_p[3]);
+  wire ud_2_1_diff_cla_c5 = (ud_2_1_diff_cla_g[3] && ud_2_1_diff_cla_p[4]) || (ud_2_1_diff_cla_g[4]) || (ud_2_1_diff_cla_c3 && ud_2_1_diff_cla_p[3] && ud_2_1_diff_cla_p[4]);
+  wire ud_2_1_diff_cla_c6 = (ud_2_1_diff_cla_g[3] && ud_2_1_diff_cla_p[4] && ud_2_1_diff_cla_p[5]) || (ud_2_1_diff_cla_g[4] && ud_2_1_diff_cla_p[5]) || (ud_2_1_diff_cla_g[5]) || (ud_2_1_diff_cla_c3 && ud_2_1_diff_cla_p[3] && ud_2_1_diff_cla_p[4] && ud_2_1_diff_cla_p[5]);
+  wire ud_2_1_diff_cla_c7 = (ud_2_1_diff_cla_g[6]) || (ud_2_1_diff_cla_c6 && ud_2_1_diff_cla_p[6]);
+  wire ud_2_1_diff_cla_c8 = (ud_2_1_diff_cla_g[6] && ud_2_1_diff_cla_p[7]) || (ud_2_1_diff_cla_g[7]) || (ud_2_1_diff_cla_c6 && ud_2_1_diff_cla_p[6] && ud_2_1_diff_cla_p[7]);
+  wire ud_2_1_diff_cla_c9 = (ud_2_1_diff_cla_g[6] && ud_2_1_diff_cla_p[7] && ud_2_1_diff_cla_p[8]) || (ud_2_1_diff_cla_g[7] && ud_2_1_diff_cla_p[8]) || (ud_2_1_diff_cla_g[8]) || (ud_2_1_diff_cla_c6 && ud_2_1_diff_cla_p[6] && ud_2_1_diff_cla_p[7] && ud_2_1_diff_cla_p[8]);
+  wire [9:0] ud_2_1_diff = {!ud_2_1_diff_cla_c9, (ud_2_1_diff_cla_p ^ {ud_2_1_diff_cla_c8, ud_2_1_diff_cla_c7, ud_2_1_diff_cla_c6, ud_2_1_diff_cla_c5, ud_2_1_diff_cla_c4, ud_2_1_diff_cla_c3, ud_2_1_diff_cla_c2, ud_2_1_diff_cla_c1, ud_2_1_diff_cla_c0})};
+  wire ud_2_1_ge_1 = !ud_2_1_diff[9] && ((|ud_2_1_diff[8:3]) || ud_2_1_diff[2:0] >= 3'd1);
+  wire ud_2_1_0_aq0 = (1'b0 && ud_2_1_ge_1);
+  wire ud_2_1_ge_2 = !ud_2_1_diff[9] && ((|ud_2_1_diff[8:3]) || ud_2_1_diff[2:0] >= 3'd2);
+  wire ud_2_1_0_aq1 = ud_2_1_0_aq0 || (1'b1 && ud_2_1_ge_2);
+  wire ud_2_1_ge_0 = !ud_2_1_diff[9];
+  wire ud_2_1_0_bq0 = 1'b1 && !ud_2_1_ge_0;
+  wire ud_2_1_0_bq1 = 1'b1 && !ud_2_1_ge_1;
+  wire ud_2_1_0_bq2 = 1'b1 && !ud_2_1_ge_2;
+  wire ud_2_1_0_best_q1 = ud_2_1_0_aq1 || ud_2_1_0_bq1;
+  wire ud_2_1_0_best_right = !((ud_2_1_0_aq0 && !ud_2_1_0_bq0) | (ud_2_1_0_aq1 && !ud_2_1_0_bq1) | (ud_2_1_0_aq1 && !ud_2_1_0_bq2));
+  wire [2:0] ud_2_1_0_best_mask = ud_2_1_0_best_right ? {1'b0, 2'd3} : {1'b1, 2'b01};
+  wire ud_2_1_1_aq0 = (1'b1 && ud_2_1_ge_0);
+  wire ud_2_1_1_aq1 = ud_2_1_1_aq0 || (1'b1 && ud_2_1_ge_1);
+  wire ud_2_1_1_best_right = !((1'b0 && !ud_2_1_1_aq0) | (ud_2_1_0_best_q1 && !ud_2_1_1_aq1) | (1'b1 && !ud_2_1_1_aq1));
+  wire [2:0] ud_2_1_1_best_mask = ud_2_1_1_best_right ? {1'b1, 2'b10} : ud_2_1_0_best_mask;
+//
+// DP PREFIX (2,2): share one signed prefix difference across
+// all A-waiting budgets d=0..2; each retained mask has 4 issue bits.
+//
+  wire [8:0] ud_2_2_diff_cla_p = ud_pa_1 ^ ~ud_pb_1;
+  wire [8:0] ud_2_2_diff_cla_g = ud_pa_1 & ~ud_pb_1;
+  wire ud_2_2_diff_cla_c0 = 1'b1;
+  wire ud_2_2_diff_cla_c1 = (ud_2_2_diff_cla_g[0]) || (ud_2_2_diff_cla_c0 && ud_2_2_diff_cla_p[0]);
+  wire ud_2_2_diff_cla_c2 = (ud_2_2_diff_cla_g[0] && ud_2_2_diff_cla_p[1]) || (ud_2_2_diff_cla_g[1]) || (ud_2_2_diff_cla_c0 && ud_2_2_diff_cla_p[0] && ud_2_2_diff_cla_p[1]);
+  wire ud_2_2_diff_cla_c3 = (ud_2_2_diff_cla_g[0] && ud_2_2_diff_cla_p[1] && ud_2_2_diff_cla_p[2]) || (ud_2_2_diff_cla_g[1] && ud_2_2_diff_cla_p[2]) || (ud_2_2_diff_cla_g[2]) || (ud_2_2_diff_cla_c0 && ud_2_2_diff_cla_p[0] && ud_2_2_diff_cla_p[1] && ud_2_2_diff_cla_p[2]);
+  wire ud_2_2_diff_cla_c4 = (ud_2_2_diff_cla_g[3]) || (ud_2_2_diff_cla_c3 && ud_2_2_diff_cla_p[3]);
+  wire ud_2_2_diff_cla_c5 = (ud_2_2_diff_cla_g[3] && ud_2_2_diff_cla_p[4]) || (ud_2_2_diff_cla_g[4]) || (ud_2_2_diff_cla_c3 && ud_2_2_diff_cla_p[3] && ud_2_2_diff_cla_p[4]);
+  wire ud_2_2_diff_cla_c6 = (ud_2_2_diff_cla_g[3] && ud_2_2_diff_cla_p[4] && ud_2_2_diff_cla_p[5]) || (ud_2_2_diff_cla_g[4] && ud_2_2_diff_cla_p[5]) || (ud_2_2_diff_cla_g[5]) || (ud_2_2_diff_cla_c3 && ud_2_2_diff_cla_p[3] && ud_2_2_diff_cla_p[4] && ud_2_2_diff_cla_p[5]);
+  wire ud_2_2_diff_cla_c7 = (ud_2_2_diff_cla_g[6]) || (ud_2_2_diff_cla_c6 && ud_2_2_diff_cla_p[6]);
+  wire ud_2_2_diff_cla_c8 = (ud_2_2_diff_cla_g[6] && ud_2_2_diff_cla_p[7]) || (ud_2_2_diff_cla_g[7]) || (ud_2_2_diff_cla_c6 && ud_2_2_diff_cla_p[6] && ud_2_2_diff_cla_p[7]);
+  wire ud_2_2_diff_cla_c9 = (ud_2_2_diff_cla_g[6] && ud_2_2_diff_cla_p[7] && ud_2_2_diff_cla_p[8]) || (ud_2_2_diff_cla_g[7] && ud_2_2_diff_cla_p[8]) || (ud_2_2_diff_cla_g[8]) || (ud_2_2_diff_cla_c6 && ud_2_2_diff_cla_p[6] && ud_2_2_diff_cla_p[7] && ud_2_2_diff_cla_p[8]);
+  wire [9:0] ud_2_2_diff = {!ud_2_2_diff_cla_c9, (ud_2_2_diff_cla_p ^ {ud_2_2_diff_cla_c8, ud_2_2_diff_cla_c7, ud_2_2_diff_cla_c6, ud_2_2_diff_cla_c5, ud_2_2_diff_cla_c4, ud_2_2_diff_cla_c3, ud_2_2_diff_cla_c2, ud_2_2_diff_cla_c1, ud_2_2_diff_cla_c0})};
+  wire ud_2_2_ge_1 = !ud_2_2_diff[9] && ((|ud_2_2_diff[8:3]) || ud_2_2_diff[2:0] >= 3'd1);
+  wire ud_2_2_0_aq0 = (1'b0 && ud_2_2_ge_1);
+  wire ud_2_2_ge_2 = !ud_2_2_diff[9] && ((|ud_2_2_diff[8:3]) || ud_2_2_diff[2:0] >= 3'd2);
+  wire ud_2_2_0_aq1 = ud_2_2_0_aq0 || (1'b1 && ud_2_2_ge_2);
+  wire ud_2_2_ge_0 = !ud_2_2_diff[9];
+  wire ud_2_2_0_bq0 = 1'b0 && !ud_2_2_ge_0;
+  wire ud_2_2_0_bq1 = ud_2_1_0_best_q1 && !ud_2_2_ge_1;
+  wire ud_2_2_0_bq2 = 1'b1 && !ud_2_2_ge_2;
+  wire ud_2_2_0_best_q1 = ud_2_2_0_aq1 || ud_2_2_0_bq1;
+  wire ud_2_2_0_best_right = !((ud_2_2_0_aq0 && !ud_2_2_0_bq0) | (ud_2_2_0_aq1 && !ud_2_2_0_bq1) | (ud_2_2_0_aq1 && !ud_2_2_0_bq2));
+  wire [3:0] ud_2_2_0_best_mask = ud_2_2_0_best_right ? {1'b0, ud_2_1_0_best_mask} : {1'b1, ud_1_2_0_best_mask};
+  wire ud_2_2_1_aq0 = (ud_1_2_1_best_q0 && ud_2_2_ge_0);
+  wire ud_2_2_1_aq1 = ud_2_2_1_aq0 || (1'b1 && ud_2_2_ge_1);
+  wire ud_2_2_ge_m1 = !ud_2_2_diff[9] || ((&ud_2_2_diff[8:3]) && ud_2_2_diff[2:0] >= 3'd7);
+  wire ud_2_2_1_bq0 = 1'b1 && !ud_2_2_ge_m1;
+  wire ud_2_2_1_bq1 = 1'b1 && !ud_2_2_ge_0;
+  wire ud_2_2_1_bq2 = 1'b1 && !ud_2_2_ge_1;
+  wire ud_2_2_1_bestr_q0 = ud_2_2_1_aq0 || ud_2_2_1_bq0;
+  wire ud_2_2_1_bestr_q1 = ud_2_2_1_aq1 || ud_2_2_1_bq1;
+  wire ud_2_2_1_bestr_q2 = ud_2_2_1_aq1 || ud_2_2_1_bq2;
+  wire ud_2_2_1_bestr_right = (ud_2_2_1_bq0 && !ud_2_2_1_aq0) | (ud_2_2_1_bq1 && !ud_2_2_1_aq1) | (ud_2_2_1_bq2 && !ud_2_2_1_aq1);
+  wire [3:0] ud_2_2_1_bestr_mask = ud_2_2_1_bestr_right ? {1'b0, ud_2_1_1_best_mask} : {1'b1, ud_1_2_1_best_mask};
+  wire ud_2_2_1_best_q0 = 1'b0 || ud_2_2_1_bestr_q0;
+  wire ud_2_2_1_best_q1 = ud_2_2_0_best_q1 || ud_2_2_1_bestr_q1;
+  wire ud_2_2_1_best_right = !((1'b0 && !ud_2_2_1_bestr_q0) | (ud_2_2_0_best_q1 && !ud_2_2_1_bestr_q1) | (1'b1 && !ud_2_2_1_bestr_q2));
+  wire [3:0] ud_2_2_1_best_mask = ud_2_2_1_best_right ? ud_2_2_1_bestr_mask : ud_2_2_0_best_mask;
+  wire ud_2_2_2_aq0 = (1'b1 && ud_2_2_ge_m1);
+  wire ud_2_2_2_aq1 = ud_2_2_2_aq0 || (1'b1 && ud_2_2_ge_0);
+  wire ud_2_2_2_best_right = !((ud_2_2_1_best_q0 && !ud_2_2_2_aq0) | (ud_2_2_1_best_q1 && !ud_2_2_2_aq1) | (1'b1 && !ud_2_2_2_aq1));
+  wire [3:0] ud_2_2_2_best_mask = ud_2_2_2_best_right ? {1'b1, ud_1_2_2_best_mask} : ud_2_2_1_best_mask;
+//
+// DP PREFIX (2,3): share one signed prefix difference across
+// all A-waiting budgets d=0..3; each retained mask has 5 issue bits.
+//
+  wire [8:0] ud_2_3_diff_cla_p = ud_pa_1 ^ ~ud_pb_2;
+  wire [8:0] ud_2_3_diff_cla_g = ud_pa_1 & ~ud_pb_2;
+  wire ud_2_3_diff_cla_c0 = 1'b1;
+  wire ud_2_3_diff_cla_c1 = (ud_2_3_diff_cla_g[0]) || (ud_2_3_diff_cla_c0 && ud_2_3_diff_cla_p[0]);
+  wire ud_2_3_diff_cla_c2 = (ud_2_3_diff_cla_g[0] && ud_2_3_diff_cla_p[1]) || (ud_2_3_diff_cla_g[1]) || (ud_2_3_diff_cla_c0 && ud_2_3_diff_cla_p[0] && ud_2_3_diff_cla_p[1]);
+  wire ud_2_3_diff_cla_c3 = (ud_2_3_diff_cla_g[0] && ud_2_3_diff_cla_p[1] && ud_2_3_diff_cla_p[2]) || (ud_2_3_diff_cla_g[1] && ud_2_3_diff_cla_p[2]) || (ud_2_3_diff_cla_g[2]) || (ud_2_3_diff_cla_c0 && ud_2_3_diff_cla_p[0] && ud_2_3_diff_cla_p[1] && ud_2_3_diff_cla_p[2]);
+  wire ud_2_3_diff_cla_c4 = (ud_2_3_diff_cla_g[3]) || (ud_2_3_diff_cla_c3 && ud_2_3_diff_cla_p[3]);
+  wire ud_2_3_diff_cla_c5 = (ud_2_3_diff_cla_g[3] && ud_2_3_diff_cla_p[4]) || (ud_2_3_diff_cla_g[4]) || (ud_2_3_diff_cla_c3 && ud_2_3_diff_cla_p[3] && ud_2_3_diff_cla_p[4]);
+  wire ud_2_3_diff_cla_c6 = (ud_2_3_diff_cla_g[3] && ud_2_3_diff_cla_p[4] && ud_2_3_diff_cla_p[5]) || (ud_2_3_diff_cla_g[4] && ud_2_3_diff_cla_p[5]) || (ud_2_3_diff_cla_g[5]) || (ud_2_3_diff_cla_c3 && ud_2_3_diff_cla_p[3] && ud_2_3_diff_cla_p[4] && ud_2_3_diff_cla_p[5]);
+  wire ud_2_3_diff_cla_c7 = (ud_2_3_diff_cla_g[6]) || (ud_2_3_diff_cla_c6 && ud_2_3_diff_cla_p[6]);
+  wire ud_2_3_diff_cla_c8 = (ud_2_3_diff_cla_g[6] && ud_2_3_diff_cla_p[7]) || (ud_2_3_diff_cla_g[7]) || (ud_2_3_diff_cla_c6 && ud_2_3_diff_cla_p[6] && ud_2_3_diff_cla_p[7]);
+  wire ud_2_3_diff_cla_c9 = (ud_2_3_diff_cla_g[6] && ud_2_3_diff_cla_p[7] && ud_2_3_diff_cla_p[8]) || (ud_2_3_diff_cla_g[7] && ud_2_3_diff_cla_p[8]) || (ud_2_3_diff_cla_g[8]) || (ud_2_3_diff_cla_c6 && ud_2_3_diff_cla_p[6] && ud_2_3_diff_cla_p[7] && ud_2_3_diff_cla_p[8]);
+  wire [9:0] ud_2_3_diff = {!ud_2_3_diff_cla_c9, (ud_2_3_diff_cla_p ^ {ud_2_3_diff_cla_c8, ud_2_3_diff_cla_c7, ud_2_3_diff_cla_c6, ud_2_3_diff_cla_c5, ud_2_3_diff_cla_c4, ud_2_3_diff_cla_c3, ud_2_3_diff_cla_c2, ud_2_3_diff_cla_c1, ud_2_3_diff_cla_c0})};
+  wire ud_2_3_ge_1 = !ud_2_3_diff[9] && ((|ud_2_3_diff[8:3]) || ud_2_3_diff[2:0] >= 3'd1);
+  wire ud_2_3_0_aq0 = (1'b0 && ud_2_3_ge_1);
+  wire ud_2_3_ge_2 = !ud_2_3_diff[9] && ((|ud_2_3_diff[8:3]) || ud_2_3_diff[2:0] >= 3'd2);
+  wire ud_2_3_0_aq1 = ud_2_3_0_aq0 || (1'b1 && ud_2_3_ge_2);
+  wire ud_2_3_ge_0 = !ud_2_3_diff[9];
+  wire ud_2_3_0_bq0 = 1'b0 && !ud_2_3_ge_0;
+  wire ud_2_3_0_bq1 = ud_2_2_0_best_q1 && !ud_2_3_ge_1;
+  wire ud_2_3_0_bq2 = 1'b1 && !ud_2_3_ge_2;
+  wire ud_2_3_0_best_q1 = ud_2_3_0_aq1 || ud_2_3_0_bq1;
+  wire ud_2_3_0_best_right = !((ud_2_3_0_aq0 && !ud_2_3_0_bq0) | (ud_2_3_0_aq1 && !ud_2_3_0_bq1) | (ud_2_3_0_aq1 && !ud_2_3_0_bq2));
+  wire [4:0] ud_2_3_0_best_mask = ud_2_3_0_best_right ? {1'b0, ud_2_2_0_best_mask} : {1'b1, ud_1_3_0_best_mask};
+  wire ud_2_3_1_aq0 = (ud_1_3_1_best_q0 && ud_2_3_ge_0);
+  wire ud_2_3_1_aq1 = ud_2_3_1_aq0 || (1'b1 && ud_2_3_ge_1);
+  wire ud_2_3_ge_m1 = !ud_2_3_diff[9] || ((&ud_2_3_diff[8:3]) && ud_2_3_diff[2:0] >= 3'd7);
+  wire ud_2_3_1_bq0 = ud_2_2_1_best_q0 && !ud_2_3_ge_m1;
+  wire ud_2_3_1_bq1 = ud_2_2_1_best_q1 && !ud_2_3_ge_0;
+  wire ud_2_3_1_bq2 = 1'b1 && !ud_2_3_ge_1;
+  wire ud_2_3_1_bestr_q0 = ud_2_3_1_aq0 || ud_2_3_1_bq0;
+  wire ud_2_3_1_bestr_q1 = ud_2_3_1_aq1 || ud_2_3_1_bq1;
+  wire ud_2_3_1_bestr_q2 = ud_2_3_1_aq1 || ud_2_3_1_bq2;
+  wire ud_2_3_1_bestr_right = (ud_2_3_1_bq0 && !ud_2_3_1_aq0) | (ud_2_3_1_bq1 && !ud_2_3_1_aq1) | (ud_2_3_1_bq2 && !ud_2_3_1_aq1);
+  wire [4:0] ud_2_3_1_bestr_mask = ud_2_3_1_bestr_right ? {1'b0, ud_2_2_1_best_mask} : {1'b1, ud_1_3_1_best_mask};
+  wire ud_2_3_1_best_q0 = 1'b0 || ud_2_3_1_bestr_q0;
+  wire ud_2_3_1_best_q1 = ud_2_3_0_best_q1 || ud_2_3_1_bestr_q1;
+  wire ud_2_3_1_best_right = !((1'b0 && !ud_2_3_1_bestr_q0) | (ud_2_3_0_best_q1 && !ud_2_3_1_bestr_q1) | (1'b1 && !ud_2_3_1_bestr_q2));
+  wire [4:0] ud_2_3_1_best_mask = ud_2_3_1_best_right ? ud_2_3_1_bestr_mask : ud_2_3_0_best_mask;
+  wire ud_2_3_2_aq0 = (ud_1_3_2_best_q0 && ud_2_3_ge_m1);
+  wire ud_2_3_2_aq1 = ud_2_3_2_aq0 || (1'b1 && ud_2_3_ge_0);
+  wire ud_2_3_ge_m2 = !ud_2_3_diff[9] || ((&ud_2_3_diff[8:3]) && ud_2_3_diff[2:0] >= 3'd6);
+  wire ud_2_3_2_bq0 = 1'b1 && !ud_2_3_ge_m2;
+  wire ud_2_3_2_bq1 = 1'b1 && !ud_2_3_ge_m1;
+  wire ud_2_3_2_bq2 = 1'b1 && !ud_2_3_ge_0;
+  wire ud_2_3_2_bestr_q0 = ud_2_3_2_aq0 || ud_2_3_2_bq0;
+  wire ud_2_3_2_bestr_q1 = ud_2_3_2_aq1 || ud_2_3_2_bq1;
+  wire ud_2_3_2_bestr_q2 = ud_2_3_2_aq1 || ud_2_3_2_bq2;
+  wire ud_2_3_2_bestr_right = (ud_2_3_2_bq0 && !ud_2_3_2_aq0) | (ud_2_3_2_bq1 && !ud_2_3_2_aq1) | (ud_2_3_2_bq2 && !ud_2_3_2_aq1);
+  wire [4:0] ud_2_3_2_bestr_mask = ud_2_3_2_bestr_right ? {1'b0, ud_2_2_2_best_mask} : {1'b1, ud_1_3_2_best_mask};
+  wire ud_2_3_2_best_q0 = ud_2_3_1_best_q0 || ud_2_3_2_bestr_q0;
+  wire ud_2_3_2_best_q1 = ud_2_3_1_best_q1 || ud_2_3_2_bestr_q1;
+  wire ud_2_3_2_best_right = !((ud_2_3_1_best_q0 && !ud_2_3_2_bestr_q0) | (ud_2_3_1_best_q1 && !ud_2_3_2_bestr_q1) | (1'b1 && !ud_2_3_2_bestr_q2));
+  wire [4:0] ud_2_3_2_best_mask = ud_2_3_2_best_right ? ud_2_3_2_bestr_mask : ud_2_3_1_best_mask;
+  wire ud_2_3_3_aq0 = (1'b1 && ud_2_3_ge_m2);
+  wire ud_2_3_3_aq1 = ud_2_3_3_aq0 || (1'b1 && ud_2_3_ge_m1);
+  wire ud_2_3_3_best_right = !((ud_2_3_2_best_q0 && !ud_2_3_3_aq0) | (ud_2_3_2_best_q1 && !ud_2_3_3_aq1) | (1'b1 && !ud_2_3_3_aq1));
+  wire [4:0] ud_2_3_3_best_mask = ud_2_3_3_best_right ? {1'b1, ud_1_3_3_best_mask} : ud_2_3_2_best_mask;
+//
+// DP PREFIX (2,4): share one signed prefix difference across
+// all A-waiting budgets d=0..4; each retained mask has 6 issue bits.
+//
+  wire [8:0] ud_2_4_diff_cla_p = ud_pa_1 ^ ~ud_pb_3;
+  wire [8:0] ud_2_4_diff_cla_g = ud_pa_1 & ~ud_pb_3;
+  wire ud_2_4_diff_cla_c0 = 1'b1;
+  wire ud_2_4_diff_cla_c1 = (ud_2_4_diff_cla_g[0]) || (ud_2_4_diff_cla_c0 && ud_2_4_diff_cla_p[0]);
+  wire ud_2_4_diff_cla_c2 = (ud_2_4_diff_cla_g[0] && ud_2_4_diff_cla_p[1]) || (ud_2_4_diff_cla_g[1]) || (ud_2_4_diff_cla_c0 && ud_2_4_diff_cla_p[0] && ud_2_4_diff_cla_p[1]);
+  wire ud_2_4_diff_cla_c3 = (ud_2_4_diff_cla_g[0] && ud_2_4_diff_cla_p[1] && ud_2_4_diff_cla_p[2]) || (ud_2_4_diff_cla_g[1] && ud_2_4_diff_cla_p[2]) || (ud_2_4_diff_cla_g[2]) || (ud_2_4_diff_cla_c0 && ud_2_4_diff_cla_p[0] && ud_2_4_diff_cla_p[1] && ud_2_4_diff_cla_p[2]);
+  wire ud_2_4_diff_cla_c4 = (ud_2_4_diff_cla_g[3]) || (ud_2_4_diff_cla_c3 && ud_2_4_diff_cla_p[3]);
+  wire ud_2_4_diff_cla_c5 = (ud_2_4_diff_cla_g[3] && ud_2_4_diff_cla_p[4]) || (ud_2_4_diff_cla_g[4]) || (ud_2_4_diff_cla_c3 && ud_2_4_diff_cla_p[3] && ud_2_4_diff_cla_p[4]);
+  wire ud_2_4_diff_cla_c6 = (ud_2_4_diff_cla_g[3] && ud_2_4_diff_cla_p[4] && ud_2_4_diff_cla_p[5]) || (ud_2_4_diff_cla_g[4] && ud_2_4_diff_cla_p[5]) || (ud_2_4_diff_cla_g[5]) || (ud_2_4_diff_cla_c3 && ud_2_4_diff_cla_p[3] && ud_2_4_diff_cla_p[4] && ud_2_4_diff_cla_p[5]);
+  wire ud_2_4_diff_cla_c7 = (ud_2_4_diff_cla_g[6]) || (ud_2_4_diff_cla_c6 && ud_2_4_diff_cla_p[6]);
+  wire ud_2_4_diff_cla_c8 = (ud_2_4_diff_cla_g[6] && ud_2_4_diff_cla_p[7]) || (ud_2_4_diff_cla_g[7]) || (ud_2_4_diff_cla_c6 && ud_2_4_diff_cla_p[6] && ud_2_4_diff_cla_p[7]);
+  wire ud_2_4_diff_cla_c9 = (ud_2_4_diff_cla_g[6] && ud_2_4_diff_cla_p[7] && ud_2_4_diff_cla_p[8]) || (ud_2_4_diff_cla_g[7] && ud_2_4_diff_cla_p[8]) || (ud_2_4_diff_cla_g[8]) || (ud_2_4_diff_cla_c6 && ud_2_4_diff_cla_p[6] && ud_2_4_diff_cla_p[7] && ud_2_4_diff_cla_p[8]);
+  wire [9:0] ud_2_4_diff = {!ud_2_4_diff_cla_c9, (ud_2_4_diff_cla_p ^ {ud_2_4_diff_cla_c8, ud_2_4_diff_cla_c7, ud_2_4_diff_cla_c6, ud_2_4_diff_cla_c5, ud_2_4_diff_cla_c4, ud_2_4_diff_cla_c3, ud_2_4_diff_cla_c2, ud_2_4_diff_cla_c1, ud_2_4_diff_cla_c0})};
+  wire ud_2_4_ge_1 = !ud_2_4_diff[9] && ((|ud_2_4_diff[8:3]) || ud_2_4_diff[2:0] >= 3'd1);
+  wire ud_2_4_0_aq0 = (1'b0 && ud_2_4_ge_1);
+  wire ud_2_4_ge_2 = !ud_2_4_diff[9] && ((|ud_2_4_diff[8:3]) || ud_2_4_diff[2:0] >= 3'd2);
+  wire ud_2_4_0_aq1 = ud_2_4_0_aq0 || (1'b1 && ud_2_4_ge_2);
+  wire ud_2_4_ge_0 = !ud_2_4_diff[9];
+  wire ud_2_4_0_bq0 = 1'b0 && !ud_2_4_ge_0;
+  wire ud_2_4_0_bq1 = ud_2_3_0_best_q1 && !ud_2_4_ge_1;
+  wire ud_2_4_0_bq2 = 1'b1 && !ud_2_4_ge_2;
+  wire ud_2_4_0_best_q1 = ud_2_4_0_aq1 || ud_2_4_0_bq1;
+  wire ud_2_4_0_best_right = !((ud_2_4_0_aq0 && !ud_2_4_0_bq0) | (ud_2_4_0_aq1 && !ud_2_4_0_bq1) | (ud_2_4_0_aq1 && !ud_2_4_0_bq2));
+  wire [5:0] ud_2_4_0_best_mask = ud_2_4_0_best_right ? {1'b0, ud_2_3_0_best_mask} : {1'b1, ud_1_4_0_best_mask};
+  wire ud_2_4_1_aq0 = (ud_1_4_1_best_q0 && ud_2_4_ge_0);
+  wire ud_2_4_1_aq1 = ud_2_4_1_aq0 || (1'b1 && ud_2_4_ge_1);
+  wire ud_2_4_ge_m1 = !ud_2_4_diff[9] || ((&ud_2_4_diff[8:3]) && ud_2_4_diff[2:0] >= 3'd7);
+  wire ud_2_4_1_bq0 = ud_2_3_1_best_q0 && !ud_2_4_ge_m1;
+  wire ud_2_4_1_bq1 = ud_2_3_1_best_q1 && !ud_2_4_ge_0;
+  wire ud_2_4_1_bq2 = 1'b1 && !ud_2_4_ge_1;
+  wire ud_2_4_1_bestr_q0 = ud_2_4_1_aq0 || ud_2_4_1_bq0;
+  wire ud_2_4_1_bestr_q1 = ud_2_4_1_aq1 || ud_2_4_1_bq1;
+  wire ud_2_4_1_bestr_q2 = ud_2_4_1_aq1 || ud_2_4_1_bq2;
+  wire ud_2_4_1_bestr_right = (ud_2_4_1_bq0 && !ud_2_4_1_aq0) | (ud_2_4_1_bq1 && !ud_2_4_1_aq1) | (ud_2_4_1_bq2 && !ud_2_4_1_aq1);
+  wire [5:0] ud_2_4_1_bestr_mask = ud_2_4_1_bestr_right ? {1'b0, ud_2_3_1_best_mask} : {1'b1, ud_1_4_1_best_mask};
+  wire ud_2_4_1_best_q0 = 1'b0 || ud_2_4_1_bestr_q0;
+  wire ud_2_4_1_best_q1 = ud_2_4_0_best_q1 || ud_2_4_1_bestr_q1;
+  wire ud_2_4_1_best_right = !((1'b0 && !ud_2_4_1_bestr_q0) | (ud_2_4_0_best_q1 && !ud_2_4_1_bestr_q1) | (1'b1 && !ud_2_4_1_bestr_q2));
+  wire [5:0] ud_2_4_1_best_mask = ud_2_4_1_best_right ? ud_2_4_1_bestr_mask : ud_2_4_0_best_mask;
+  wire ud_2_4_2_aq0 = (ud_1_4_2_best_q0 && ud_2_4_ge_m1);
+  wire ud_2_4_2_aq1 = ud_2_4_2_aq0 || (1'b1 && ud_2_4_ge_0);
+  wire ud_2_4_ge_m2 = !ud_2_4_diff[9] || ((&ud_2_4_diff[8:3]) && ud_2_4_diff[2:0] >= 3'd6);
+  wire ud_2_4_2_bq0 = ud_2_3_2_best_q0 && !ud_2_4_ge_m2;
+  wire ud_2_4_2_bq1 = ud_2_3_2_best_q1 && !ud_2_4_ge_m1;
+  wire ud_2_4_2_bq2 = 1'b1 && !ud_2_4_ge_0;
+  wire ud_2_4_2_bestr_q0 = ud_2_4_2_aq0 || ud_2_4_2_bq0;
+  wire ud_2_4_2_bestr_q1 = ud_2_4_2_aq1 || ud_2_4_2_bq1;
+  wire ud_2_4_2_bestr_q2 = ud_2_4_2_aq1 || ud_2_4_2_bq2;
+  wire ud_2_4_2_bestr_right = (ud_2_4_2_bq0 && !ud_2_4_2_aq0) | (ud_2_4_2_bq1 && !ud_2_4_2_aq1) | (ud_2_4_2_bq2 && !ud_2_4_2_aq1);
+  wire [5:0] ud_2_4_2_bestr_mask = ud_2_4_2_bestr_right ? {1'b0, ud_2_3_2_best_mask} : {1'b1, ud_1_4_2_best_mask};
+  wire ud_2_4_2_best_q0 = ud_2_4_1_best_q0 || ud_2_4_2_bestr_q0;
+  wire ud_2_4_2_best_q1 = ud_2_4_1_best_q1 || ud_2_4_2_bestr_q1;
+  wire ud_2_4_2_best_right = !((ud_2_4_1_best_q0 && !ud_2_4_2_bestr_q0) | (ud_2_4_1_best_q1 && !ud_2_4_2_bestr_q1) | (1'b1 && !ud_2_4_2_bestr_q2));
+  wire [5:0] ud_2_4_2_best_mask = ud_2_4_2_best_right ? ud_2_4_2_bestr_mask : ud_2_4_1_best_mask;
+  wire ud_2_4_3_aq0 = (ud_1_4_3_best_q0 && ud_2_4_ge_m2);
+  wire ud_2_4_3_aq1 = ud_2_4_3_aq0 || (1'b1 && ud_2_4_ge_m1);
+  wire ud_2_4_ge_m3 = !ud_2_4_diff[9] || ((&ud_2_4_diff[8:3]) && ud_2_4_diff[2:0] >= 3'd5);
+  wire ud_2_4_3_bq0 = 1'b1 && !ud_2_4_ge_m3;
+  wire ud_2_4_3_bq1 = 1'b1 && !ud_2_4_ge_m2;
+  wire ud_2_4_3_bq2 = 1'b1 && !ud_2_4_ge_m1;
+  wire ud_2_4_3_bestr_q0 = ud_2_4_3_aq0 || ud_2_4_3_bq0;
+  wire ud_2_4_3_bestr_q1 = ud_2_4_3_aq1 || ud_2_4_3_bq1;
+  wire ud_2_4_3_bestr_q2 = ud_2_4_3_aq1 || ud_2_4_3_bq2;
+  wire ud_2_4_3_bestr_right = (ud_2_4_3_bq0 && !ud_2_4_3_aq0) | (ud_2_4_3_bq1 && !ud_2_4_3_aq1) | (ud_2_4_3_bq2 && !ud_2_4_3_aq1);
+  wire [5:0] ud_2_4_3_bestr_mask = ud_2_4_3_bestr_right ? {1'b0, ud_2_3_3_best_mask} : {1'b1, ud_1_4_3_best_mask};
+  wire ud_2_4_3_best_q0 = ud_2_4_2_best_q0 || ud_2_4_3_bestr_q0;
+  wire ud_2_4_3_best_q1 = ud_2_4_2_best_q1 || ud_2_4_3_bestr_q1;
+  wire ud_2_4_3_best_right = !((ud_2_4_2_best_q0 && !ud_2_4_3_bestr_q0) | (ud_2_4_2_best_q1 && !ud_2_4_3_bestr_q1) | (1'b1 && !ud_2_4_3_bestr_q2));
+  wire [5:0] ud_2_4_3_best_mask = ud_2_4_3_best_right ? ud_2_4_3_bestr_mask : ud_2_4_2_best_mask;
+  wire ud_2_4_4_aq0 = (1'b1 && ud_2_4_ge_m3);
+  wire ud_2_4_4_aq1 = ud_2_4_4_aq0 || (1'b1 && ud_2_4_ge_m2);
+  wire ud_2_4_4_best_right = !((ud_2_4_3_best_q0 && !ud_2_4_4_aq0) | (ud_2_4_3_best_q1 && !ud_2_4_4_aq1) | (1'b1 && !ud_2_4_4_aq1));
+  wire [5:0] ud_2_4_4_best_mask = ud_2_4_4_best_right ? {1'b1, ud_1_4_4_best_mask} : ud_2_4_3_best_mask;
+//
+// DP PREFIX (2,5): share one signed prefix difference across
+// all A-waiting budgets d=0..5; each retained mask has 7 issue bits.
+//
+  wire [8:0] ud_2_5_diff_cla_p = ud_pa_1 ^ ~ud_pb_4;
+  wire [8:0] ud_2_5_diff_cla_g = ud_pa_1 & ~ud_pb_4;
+  wire ud_2_5_diff_cla_c0 = 1'b1;
+  wire ud_2_5_diff_cla_c1 = (ud_2_5_diff_cla_g[0]) || (ud_2_5_diff_cla_c0 && ud_2_5_diff_cla_p[0]);
+  wire ud_2_5_diff_cla_c2 = (ud_2_5_diff_cla_g[0] && ud_2_5_diff_cla_p[1]) || (ud_2_5_diff_cla_g[1]) || (ud_2_5_diff_cla_c0 && ud_2_5_diff_cla_p[0] && ud_2_5_diff_cla_p[1]);
+  wire ud_2_5_diff_cla_c3 = (ud_2_5_diff_cla_g[0] && ud_2_5_diff_cla_p[1] && ud_2_5_diff_cla_p[2]) || (ud_2_5_diff_cla_g[1] && ud_2_5_diff_cla_p[2]) || (ud_2_5_diff_cla_g[2]) || (ud_2_5_diff_cla_c0 && ud_2_5_diff_cla_p[0] && ud_2_5_diff_cla_p[1] && ud_2_5_diff_cla_p[2]);
+  wire ud_2_5_diff_cla_c4 = (ud_2_5_diff_cla_g[3]) || (ud_2_5_diff_cla_c3 && ud_2_5_diff_cla_p[3]);
+  wire ud_2_5_diff_cla_c5 = (ud_2_5_diff_cla_g[3] && ud_2_5_diff_cla_p[4]) || (ud_2_5_diff_cla_g[4]) || (ud_2_5_diff_cla_c3 && ud_2_5_diff_cla_p[3] && ud_2_5_diff_cla_p[4]);
+  wire ud_2_5_diff_cla_c6 = (ud_2_5_diff_cla_g[3] && ud_2_5_diff_cla_p[4] && ud_2_5_diff_cla_p[5]) || (ud_2_5_diff_cla_g[4] && ud_2_5_diff_cla_p[5]) || (ud_2_5_diff_cla_g[5]) || (ud_2_5_diff_cla_c3 && ud_2_5_diff_cla_p[3] && ud_2_5_diff_cla_p[4] && ud_2_5_diff_cla_p[5]);
+  wire ud_2_5_diff_cla_c7 = (ud_2_5_diff_cla_g[6]) || (ud_2_5_diff_cla_c6 && ud_2_5_diff_cla_p[6]);
+  wire ud_2_5_diff_cla_c8 = (ud_2_5_diff_cla_g[6] && ud_2_5_diff_cla_p[7]) || (ud_2_5_diff_cla_g[7]) || (ud_2_5_diff_cla_c6 && ud_2_5_diff_cla_p[6] && ud_2_5_diff_cla_p[7]);
+  wire ud_2_5_diff_cla_c9 = (ud_2_5_diff_cla_g[6] && ud_2_5_diff_cla_p[7] && ud_2_5_diff_cla_p[8]) || (ud_2_5_diff_cla_g[7] && ud_2_5_diff_cla_p[8]) || (ud_2_5_diff_cla_g[8]) || (ud_2_5_diff_cla_c6 && ud_2_5_diff_cla_p[6] && ud_2_5_diff_cla_p[7] && ud_2_5_diff_cla_p[8]);
+  wire [9:0] ud_2_5_diff = {!ud_2_5_diff_cla_c9, (ud_2_5_diff_cla_p ^ {ud_2_5_diff_cla_c8, ud_2_5_diff_cla_c7, ud_2_5_diff_cla_c6, ud_2_5_diff_cla_c5, ud_2_5_diff_cla_c4, ud_2_5_diff_cla_c3, ud_2_5_diff_cla_c2, ud_2_5_diff_cla_c1, ud_2_5_diff_cla_c0})};
+  wire ud_2_5_ge_1 = !ud_2_5_diff[9] && ((|ud_2_5_diff[8:3]) || ud_2_5_diff[2:0] >= 3'd1);
+  wire ud_2_5_0_aq0 = (1'b0 && ud_2_5_ge_1);
+  wire ud_2_5_ge_2 = !ud_2_5_diff[9] && ((|ud_2_5_diff[8:3]) || ud_2_5_diff[2:0] >= 3'd2);
+  wire ud_2_5_0_aq1 = ud_2_5_0_aq0 || (1'b1 && ud_2_5_ge_2);
+  wire ud_2_5_ge_0 = !ud_2_5_diff[9];
+  wire ud_2_5_0_bq0 = 1'b0 && !ud_2_5_ge_0;
+  wire ud_2_5_0_bq1 = ud_2_4_0_best_q1 && !ud_2_5_ge_1;
+  wire ud_2_5_0_bq2 = 1'b1 && !ud_2_5_ge_2;
+  wire ud_2_5_0_best_q1 = ud_2_5_0_aq1 || ud_2_5_0_bq1;
+  wire ud_2_5_0_best_right = !((ud_2_5_0_aq0 && !ud_2_5_0_bq0) | (ud_2_5_0_aq1 && !ud_2_5_0_bq1) | (ud_2_5_0_aq1 && !ud_2_5_0_bq2));
+  wire [6:0] ud_2_5_0_best_mask = ud_2_5_0_best_right ? {1'b0, ud_2_4_0_best_mask} : {1'b1, ud_1_5_0_best_mask};
+  wire ud_2_5_1_aq0 = (ud_1_5_1_best_q0 && ud_2_5_ge_0);
+  wire ud_2_5_1_aq1 = ud_2_5_1_aq0 || (1'b1 && ud_2_5_ge_1);
+  wire ud_2_5_ge_m1 = !ud_2_5_diff[9] || ((&ud_2_5_diff[8:3]) && ud_2_5_diff[2:0] >= 3'd7);
+  wire ud_2_5_1_bq0 = ud_2_4_1_best_q0 && !ud_2_5_ge_m1;
+  wire ud_2_5_1_bq1 = ud_2_4_1_best_q1 && !ud_2_5_ge_0;
+  wire ud_2_5_1_bq2 = 1'b1 && !ud_2_5_ge_1;
+  wire ud_2_5_1_bestr_q0 = ud_2_5_1_aq0 || ud_2_5_1_bq0;
+  wire ud_2_5_1_bestr_q1 = ud_2_5_1_aq1 || ud_2_5_1_bq1;
+  wire ud_2_5_1_bestr_q2 = ud_2_5_1_aq1 || ud_2_5_1_bq2;
+  wire ud_2_5_1_bestr_right = (ud_2_5_1_bq0 && !ud_2_5_1_aq0) | (ud_2_5_1_bq1 && !ud_2_5_1_aq1) | (ud_2_5_1_bq2 && !ud_2_5_1_aq1);
+  wire [6:0] ud_2_5_1_bestr_mask = ud_2_5_1_bestr_right ? {1'b0, ud_2_4_1_best_mask} : {1'b1, ud_1_5_1_best_mask};
+  wire ud_2_5_1_best_q0 = 1'b0 || ud_2_5_1_bestr_q0;
+  wire ud_2_5_1_best_q1 = ud_2_5_0_best_q1 || ud_2_5_1_bestr_q1;
+  wire ud_2_5_1_best_right = !((1'b0 && !ud_2_5_1_bestr_q0) | (ud_2_5_0_best_q1 && !ud_2_5_1_bestr_q1) | (1'b1 && !ud_2_5_1_bestr_q2));
+  wire [6:0] ud_2_5_1_best_mask = ud_2_5_1_best_right ? ud_2_5_1_bestr_mask : ud_2_5_0_best_mask;
+  wire ud_2_5_2_aq0 = (ud_1_5_2_best_q0 && ud_2_5_ge_m1);
+  wire ud_2_5_2_aq1 = ud_2_5_2_aq0 || (1'b1 && ud_2_5_ge_0);
+  wire ud_2_5_ge_m2 = !ud_2_5_diff[9] || ((&ud_2_5_diff[8:3]) && ud_2_5_diff[2:0] >= 3'd6);
+  wire ud_2_5_2_bq0 = ud_2_4_2_best_q0 && !ud_2_5_ge_m2;
+  wire ud_2_5_2_bq1 = ud_2_4_2_best_q1 && !ud_2_5_ge_m1;
+  wire ud_2_5_2_bq2 = 1'b1 && !ud_2_5_ge_0;
+  wire ud_2_5_2_bestr_q0 = ud_2_5_2_aq0 || ud_2_5_2_bq0;
+  wire ud_2_5_2_bestr_q1 = ud_2_5_2_aq1 || ud_2_5_2_bq1;
+  wire ud_2_5_2_bestr_q2 = ud_2_5_2_aq1 || ud_2_5_2_bq2;
+  wire ud_2_5_2_bestr_right = (ud_2_5_2_bq0 && !ud_2_5_2_aq0) | (ud_2_5_2_bq1 && !ud_2_5_2_aq1) | (ud_2_5_2_bq2 && !ud_2_5_2_aq1);
+  wire [6:0] ud_2_5_2_bestr_mask = ud_2_5_2_bestr_right ? {1'b0, ud_2_4_2_best_mask} : {1'b1, ud_1_5_2_best_mask};
+  wire ud_2_5_2_best_q0 = ud_2_5_1_best_q0 || ud_2_5_2_bestr_q0;
+  wire ud_2_5_2_best_q1 = ud_2_5_1_best_q1 || ud_2_5_2_bestr_q1;
+  wire ud_2_5_2_best_right = !((ud_2_5_1_best_q0 && !ud_2_5_2_bestr_q0) | (ud_2_5_1_best_q1 && !ud_2_5_2_bestr_q1) | (1'b1 && !ud_2_5_2_bestr_q2));
+  wire [6:0] ud_2_5_2_best_mask = ud_2_5_2_best_right ? ud_2_5_2_bestr_mask : ud_2_5_1_best_mask;
+  wire ud_2_5_3_aq0 = (ud_1_5_3_best_q0 && ud_2_5_ge_m2);
+  wire ud_2_5_3_aq1 = ud_2_5_3_aq0 || (1'b1 && ud_2_5_ge_m1);
+  wire ud_2_5_ge_m3 = !ud_2_5_diff[9] || ((&ud_2_5_diff[8:3]) && ud_2_5_diff[2:0] >= 3'd5);
+  wire ud_2_5_3_bq0 = ud_2_4_3_best_q0 && !ud_2_5_ge_m3;
+  wire ud_2_5_3_bq1 = ud_2_4_3_best_q1 && !ud_2_5_ge_m2;
+  wire ud_2_5_3_bq2 = 1'b1 && !ud_2_5_ge_m1;
+  wire ud_2_5_3_bestr_q0 = ud_2_5_3_aq0 || ud_2_5_3_bq0;
+  wire ud_2_5_3_bestr_q1 = ud_2_5_3_aq1 || ud_2_5_3_bq1;
+  wire ud_2_5_3_bestr_q2 = ud_2_5_3_aq1 || ud_2_5_3_bq2;
+  wire ud_2_5_3_bestr_right = (ud_2_5_3_bq0 && !ud_2_5_3_aq0) | (ud_2_5_3_bq1 && !ud_2_5_3_aq1) | (ud_2_5_3_bq2 && !ud_2_5_3_aq1);
+  wire [6:0] ud_2_5_3_bestr_mask = ud_2_5_3_bestr_right ? {1'b0, ud_2_4_3_best_mask} : {1'b1, ud_1_5_3_best_mask};
+  wire ud_2_5_3_best_q0 = ud_2_5_2_best_q0 || ud_2_5_3_bestr_q0;
+  wire ud_2_5_3_best_q1 = ud_2_5_2_best_q1 || ud_2_5_3_bestr_q1;
+  wire ud_2_5_3_best_right = !((ud_2_5_2_best_q0 && !ud_2_5_3_bestr_q0) | (ud_2_5_2_best_q1 && !ud_2_5_3_bestr_q1) | (1'b1 && !ud_2_5_3_bestr_q2));
+  wire [6:0] ud_2_5_3_best_mask = ud_2_5_3_best_right ? ud_2_5_3_bestr_mask : ud_2_5_2_best_mask;
+  wire ud_2_5_4_aq0 = (ud_1_5_4_best_q0 && ud_2_5_ge_m3);
+  wire ud_2_5_4_aq1 = ud_2_5_4_aq0 || (1'b1 && ud_2_5_ge_m2);
+  wire ud_2_5_ge_m4 = !ud_2_5_diff[9] || ((&ud_2_5_diff[8:3]) && ud_2_5_diff[2:0] >= 3'd4);
+  wire ud_2_5_4_bq0 = 1'b1 && !ud_2_5_ge_m4;
+  wire ud_2_5_4_bq1 = 1'b1 && !ud_2_5_ge_m3;
+  wire ud_2_5_4_bq2 = 1'b1 && !ud_2_5_ge_m2;
+  wire ud_2_5_4_bestr_q0 = ud_2_5_4_aq0 || ud_2_5_4_bq0;
+  wire ud_2_5_4_bestr_q1 = ud_2_5_4_aq1 || ud_2_5_4_bq1;
+  wire ud_2_5_4_bestr_q2 = ud_2_5_4_aq1 || ud_2_5_4_bq2;
+  wire ud_2_5_4_bestr_right = (ud_2_5_4_bq0 && !ud_2_5_4_aq0) | (ud_2_5_4_bq1 && !ud_2_5_4_aq1) | (ud_2_5_4_bq2 && !ud_2_5_4_aq1);
+  wire [6:0] ud_2_5_4_bestr_mask = ud_2_5_4_bestr_right ? {1'b0, ud_2_4_4_best_mask} : {1'b1, ud_1_5_4_best_mask};
+  wire ud_2_5_4_best_q0 = ud_2_5_3_best_q0 || ud_2_5_4_bestr_q0;
+  wire ud_2_5_4_best_q1 = ud_2_5_3_best_q1 || ud_2_5_4_bestr_q1;
+  wire ud_2_5_4_best_right = !((ud_2_5_3_best_q0 && !ud_2_5_4_bestr_q0) | (ud_2_5_3_best_q1 && !ud_2_5_4_bestr_q1) | (1'b1 && !ud_2_5_4_bestr_q2));
+  wire [6:0] ud_2_5_4_best_mask = ud_2_5_4_best_right ? ud_2_5_4_bestr_mask : ud_2_5_3_best_mask;
+  wire ud_2_5_5_aq0 = (1'b1 && ud_2_5_ge_m4);
+  wire ud_2_5_5_aq1 = ud_2_5_5_aq0 || (1'b1 && ud_2_5_ge_m3);
+  wire ud_2_5_5_best_right = !((ud_2_5_4_best_q0 && !ud_2_5_5_aq0) | (ud_2_5_4_best_q1 && !ud_2_5_5_aq1) | (1'b1 && !ud_2_5_5_aq1));
+  wire [6:0] ud_2_5_5_best_mask = ud_2_5_5_best_right ? {1'b1, ud_1_5_5_best_mask} : ud_2_5_4_best_mask;
+//
+// DP PREFIX (2,6): share one signed prefix difference across
+// all A-waiting budgets d=0..6; each retained mask has 8 issue bits.
+//
+  wire [8:0] ud_2_6_diff_cla_p = ud_pa_1 ^ ~ud_pb_5;
+  wire [8:0] ud_2_6_diff_cla_g = ud_pa_1 & ~ud_pb_5;
+  wire ud_2_6_diff_cla_c0 = 1'b1;
+  wire ud_2_6_diff_cla_c1 = (ud_2_6_diff_cla_g[0]) || (ud_2_6_diff_cla_c0 && ud_2_6_diff_cla_p[0]);
+  wire ud_2_6_diff_cla_c2 = (ud_2_6_diff_cla_g[0] && ud_2_6_diff_cla_p[1]) || (ud_2_6_diff_cla_g[1]) || (ud_2_6_diff_cla_c0 && ud_2_6_diff_cla_p[0] && ud_2_6_diff_cla_p[1]);
+  wire ud_2_6_diff_cla_c3 = (ud_2_6_diff_cla_g[0] && ud_2_6_diff_cla_p[1] && ud_2_6_diff_cla_p[2]) || (ud_2_6_diff_cla_g[1] && ud_2_6_diff_cla_p[2]) || (ud_2_6_diff_cla_g[2]) || (ud_2_6_diff_cla_c0 && ud_2_6_diff_cla_p[0] && ud_2_6_diff_cla_p[1] && ud_2_6_diff_cla_p[2]);
+  wire ud_2_6_diff_cla_c4 = (ud_2_6_diff_cla_g[3]) || (ud_2_6_diff_cla_c3 && ud_2_6_diff_cla_p[3]);
+  wire ud_2_6_diff_cla_c5 = (ud_2_6_diff_cla_g[3] && ud_2_6_diff_cla_p[4]) || (ud_2_6_diff_cla_g[4]) || (ud_2_6_diff_cla_c3 && ud_2_6_diff_cla_p[3] && ud_2_6_diff_cla_p[4]);
+  wire ud_2_6_diff_cla_c6 = (ud_2_6_diff_cla_g[3] && ud_2_6_diff_cla_p[4] && ud_2_6_diff_cla_p[5]) || (ud_2_6_diff_cla_g[4] && ud_2_6_diff_cla_p[5]) || (ud_2_6_diff_cla_g[5]) || (ud_2_6_diff_cla_c3 && ud_2_6_diff_cla_p[3] && ud_2_6_diff_cla_p[4] && ud_2_6_diff_cla_p[5]);
+  wire ud_2_6_diff_cla_c7 = (ud_2_6_diff_cla_g[6]) || (ud_2_6_diff_cla_c6 && ud_2_6_diff_cla_p[6]);
+  wire ud_2_6_diff_cla_c8 = (ud_2_6_diff_cla_g[6] && ud_2_6_diff_cla_p[7]) || (ud_2_6_diff_cla_g[7]) || (ud_2_6_diff_cla_c6 && ud_2_6_diff_cla_p[6] && ud_2_6_diff_cla_p[7]);
+  wire ud_2_6_diff_cla_c9 = (ud_2_6_diff_cla_g[6] && ud_2_6_diff_cla_p[7] && ud_2_6_diff_cla_p[8]) || (ud_2_6_diff_cla_g[7] && ud_2_6_diff_cla_p[8]) || (ud_2_6_diff_cla_g[8]) || (ud_2_6_diff_cla_c6 && ud_2_6_diff_cla_p[6] && ud_2_6_diff_cla_p[7] && ud_2_6_diff_cla_p[8]);
+  wire [9:0] ud_2_6_diff = {!ud_2_6_diff_cla_c9, (ud_2_6_diff_cla_p ^ {ud_2_6_diff_cla_c8, ud_2_6_diff_cla_c7, ud_2_6_diff_cla_c6, ud_2_6_diff_cla_c5, ud_2_6_diff_cla_c4, ud_2_6_diff_cla_c3, ud_2_6_diff_cla_c2, ud_2_6_diff_cla_c1, ud_2_6_diff_cla_c0})};
+  wire ud_2_6_ge_1 = !ud_2_6_diff[9] && ((|ud_2_6_diff[8:3]) || ud_2_6_diff[2:0] >= 3'd1);
+  wire ud_2_6_0_aq0 = (1'b0 && ud_2_6_ge_1);
+  wire ud_2_6_ge_2 = !ud_2_6_diff[9] && ((|ud_2_6_diff[8:3]) || ud_2_6_diff[2:0] >= 3'd2);
+  wire ud_2_6_0_aq1 = ud_2_6_0_aq0 || (1'b1 && ud_2_6_ge_2);
+  wire ud_2_6_ge_0 = !ud_2_6_diff[9];
+  wire ud_2_6_0_bq0 = 1'b0 && !ud_2_6_ge_0;
+  wire ud_2_6_0_bq1 = ud_2_5_0_best_q1 && !ud_2_6_ge_1;
+  wire ud_2_6_0_bq2 = 1'b1 && !ud_2_6_ge_2;
+  wire ud_2_6_0_best_q1 = ud_2_6_0_aq1 || ud_2_6_0_bq1;
+  wire ud_2_6_0_best_right = !((ud_2_6_0_aq0 && !ud_2_6_0_bq0) | (ud_2_6_0_aq1 && !ud_2_6_0_bq1) | (ud_2_6_0_aq1 && !ud_2_6_0_bq2));
+  wire [7:0] ud_2_6_0_best_mask = ud_2_6_0_best_right ? {1'b0, ud_2_5_0_best_mask} : {1'b1, ud_1_6_0_best_mask};
+  wire ud_2_6_1_aq0 = (ud_1_6_1_best_q0 && ud_2_6_ge_0);
+  wire ud_2_6_1_aq1 = ud_2_6_1_aq0 || (1'b1 && ud_2_6_ge_1);
+  wire ud_2_6_ge_m1 = !ud_2_6_diff[9] || ((&ud_2_6_diff[8:3]) && ud_2_6_diff[2:0] >= 3'd7);
+  wire ud_2_6_1_bq0 = ud_2_5_1_best_q0 && !ud_2_6_ge_m1;
+  wire ud_2_6_1_bq1 = ud_2_5_1_best_q1 && !ud_2_6_ge_0;
+  wire ud_2_6_1_bq2 = 1'b1 && !ud_2_6_ge_1;
+  wire ud_2_6_1_bestr_q0 = ud_2_6_1_aq0 || ud_2_6_1_bq0;
+  wire ud_2_6_1_bestr_q1 = ud_2_6_1_aq1 || ud_2_6_1_bq1;
+  wire ud_2_6_1_bestr_q2 = ud_2_6_1_aq1 || ud_2_6_1_bq2;
+  wire ud_2_6_1_bestr_right = (ud_2_6_1_bq0 && !ud_2_6_1_aq0) | (ud_2_6_1_bq1 && !ud_2_6_1_aq1) | (ud_2_6_1_bq2 && !ud_2_6_1_aq1);
+  wire [7:0] ud_2_6_1_bestr_mask = ud_2_6_1_bestr_right ? {1'b0, ud_2_5_1_best_mask} : {1'b1, ud_1_6_1_best_mask};
+  wire ud_2_6_1_best_q0 = 1'b0 || ud_2_6_1_bestr_q0;
+  wire ud_2_6_1_best_q1 = ud_2_6_0_best_q1 || ud_2_6_1_bestr_q1;
+  wire ud_2_6_1_best_right = !((1'b0 && !ud_2_6_1_bestr_q0) | (ud_2_6_0_best_q1 && !ud_2_6_1_bestr_q1) | (1'b1 && !ud_2_6_1_bestr_q2));
+  wire [7:0] ud_2_6_1_best_mask = ud_2_6_1_best_right ? ud_2_6_1_bestr_mask : ud_2_6_0_best_mask;
+  wire ud_2_6_2_aq0 = (ud_1_6_2_best_q0 && ud_2_6_ge_m1);
+  wire ud_2_6_2_aq1 = ud_2_6_2_aq0 || (1'b1 && ud_2_6_ge_0);
+  wire ud_2_6_ge_m2 = !ud_2_6_diff[9] || ((&ud_2_6_diff[8:3]) && ud_2_6_diff[2:0] >= 3'd6);
+  wire ud_2_6_2_bq0 = ud_2_5_2_best_q0 && !ud_2_6_ge_m2;
+  wire ud_2_6_2_bq1 = ud_2_5_2_best_q1 && !ud_2_6_ge_m1;
+  wire ud_2_6_2_bq2 = 1'b1 && !ud_2_6_ge_0;
+  wire ud_2_6_2_bestr_q0 = ud_2_6_2_aq0 || ud_2_6_2_bq0;
+  wire ud_2_6_2_bestr_q1 = ud_2_6_2_aq1 || ud_2_6_2_bq1;
+  wire ud_2_6_2_bestr_q2 = ud_2_6_2_aq1 || ud_2_6_2_bq2;
+  wire ud_2_6_2_bestr_right = (ud_2_6_2_bq0 && !ud_2_6_2_aq0) | (ud_2_6_2_bq1 && !ud_2_6_2_aq1) | (ud_2_6_2_bq2 && !ud_2_6_2_aq1);
+  wire [7:0] ud_2_6_2_bestr_mask = ud_2_6_2_bestr_right ? {1'b0, ud_2_5_2_best_mask} : {1'b1, ud_1_6_2_best_mask};
+  wire ud_2_6_2_best_q0 = ud_2_6_1_best_q0 || ud_2_6_2_bestr_q0;
+  wire ud_2_6_2_best_q1 = ud_2_6_1_best_q1 || ud_2_6_2_bestr_q1;
+  wire ud_2_6_2_best_right = !((ud_2_6_1_best_q0 && !ud_2_6_2_bestr_q0) | (ud_2_6_1_best_q1 && !ud_2_6_2_bestr_q1) | (1'b1 && !ud_2_6_2_bestr_q2));
+  wire [7:0] ud_2_6_2_best_mask = ud_2_6_2_best_right ? ud_2_6_2_bestr_mask : ud_2_6_1_best_mask;
+  wire ud_2_6_3_aq0 = (ud_1_6_3_best_q0 && ud_2_6_ge_m2);
+  wire ud_2_6_3_aq1 = ud_2_6_3_aq0 || (1'b1 && ud_2_6_ge_m1);
+  wire ud_2_6_ge_m3 = !ud_2_6_diff[9] || ((&ud_2_6_diff[8:3]) && ud_2_6_diff[2:0] >= 3'd5);
+  wire ud_2_6_3_bq0 = ud_2_5_3_best_q0 && !ud_2_6_ge_m3;
+  wire ud_2_6_3_bq1 = ud_2_5_3_best_q1 && !ud_2_6_ge_m2;
+  wire ud_2_6_3_bq2 = 1'b1 && !ud_2_6_ge_m1;
+  wire ud_2_6_3_bestr_q0 = ud_2_6_3_aq0 || ud_2_6_3_bq0;
+  wire ud_2_6_3_bestr_q1 = ud_2_6_3_aq1 || ud_2_6_3_bq1;
+  wire ud_2_6_3_bestr_q2 = ud_2_6_3_aq1 || ud_2_6_3_bq2;
+  wire ud_2_6_3_bestr_right = (ud_2_6_3_bq0 && !ud_2_6_3_aq0) | (ud_2_6_3_bq1 && !ud_2_6_3_aq1) | (ud_2_6_3_bq2 && !ud_2_6_3_aq1);
+  wire [7:0] ud_2_6_3_bestr_mask = ud_2_6_3_bestr_right ? {1'b0, ud_2_5_3_best_mask} : {1'b1, ud_1_6_3_best_mask};
+  wire ud_2_6_3_best_q0 = ud_2_6_2_best_q0 || ud_2_6_3_bestr_q0;
+  wire ud_2_6_3_best_q1 = ud_2_6_2_best_q1 || ud_2_6_3_bestr_q1;
+  wire ud_2_6_3_best_right = !((ud_2_6_2_best_q0 && !ud_2_6_3_bestr_q0) | (ud_2_6_2_best_q1 && !ud_2_6_3_bestr_q1) | (1'b1 && !ud_2_6_3_bestr_q2));
+  wire [7:0] ud_2_6_3_best_mask = ud_2_6_3_best_right ? ud_2_6_3_bestr_mask : ud_2_6_2_best_mask;
+  wire ud_2_6_4_aq0 = (ud_1_6_4_best_q0 && ud_2_6_ge_m3);
+  wire ud_2_6_4_aq1 = ud_2_6_4_aq0 || (1'b1 && ud_2_6_ge_m2);
+  wire ud_2_6_ge_m4 = !ud_2_6_diff[9] || ((&ud_2_6_diff[8:3]) && ud_2_6_diff[2:0] >= 3'd4);
+  wire ud_2_6_4_bq0 = ud_2_5_4_best_q0 && !ud_2_6_ge_m4;
+  wire ud_2_6_4_bq1 = ud_2_5_4_best_q1 && !ud_2_6_ge_m3;
+  wire ud_2_6_4_bq2 = 1'b1 && !ud_2_6_ge_m2;
+  wire ud_2_6_4_bestr_q0 = ud_2_6_4_aq0 || ud_2_6_4_bq0;
+  wire ud_2_6_4_bestr_q1 = ud_2_6_4_aq1 || ud_2_6_4_bq1;
+  wire ud_2_6_4_bestr_q2 = ud_2_6_4_aq1 || ud_2_6_4_bq2;
+  wire ud_2_6_4_bestr_right = (ud_2_6_4_bq0 && !ud_2_6_4_aq0) | (ud_2_6_4_bq1 && !ud_2_6_4_aq1) | (ud_2_6_4_bq2 && !ud_2_6_4_aq1);
+  wire [7:0] ud_2_6_4_bestr_mask = ud_2_6_4_bestr_right ? {1'b0, ud_2_5_4_best_mask} : {1'b1, ud_1_6_4_best_mask};
+  wire ud_2_6_4_best_q0 = ud_2_6_3_best_q0 || ud_2_6_4_bestr_q0;
+  wire ud_2_6_4_best_q1 = ud_2_6_3_best_q1 || ud_2_6_4_bestr_q1;
+  wire ud_2_6_4_best_right = !((ud_2_6_3_best_q0 && !ud_2_6_4_bestr_q0) | (ud_2_6_3_best_q1 && !ud_2_6_4_bestr_q1) | (1'b1 && !ud_2_6_4_bestr_q2));
+  wire [7:0] ud_2_6_4_best_mask = ud_2_6_4_best_right ? ud_2_6_4_bestr_mask : ud_2_6_3_best_mask;
+  wire ud_2_6_5_aq0 = (ud_1_6_5_best_q0 && ud_2_6_ge_m4);
+  wire ud_2_6_5_aq1 = ud_2_6_5_aq0 || (1'b1 && ud_2_6_ge_m3);
+  wire ud_2_6_ge_m5 = !ud_2_6_diff[9] || ((&ud_2_6_diff[8:3]) && ud_2_6_diff[2:0] >= 3'd3);
+  wire ud_2_6_5_bq0 = 1'b1 && !ud_2_6_ge_m5;
+  wire ud_2_6_5_bq1 = 1'b1 && !ud_2_6_ge_m4;
+  wire ud_2_6_5_bq2 = 1'b1 && !ud_2_6_ge_m3;
+  wire ud_2_6_5_bestr_q0 = ud_2_6_5_aq0 || ud_2_6_5_bq0;
+  wire ud_2_6_5_bestr_q1 = ud_2_6_5_aq1 || ud_2_6_5_bq1;
+  wire ud_2_6_5_bestr_q2 = ud_2_6_5_aq1 || ud_2_6_5_bq2;
+  wire ud_2_6_5_bestr_right = (ud_2_6_5_bq0 && !ud_2_6_5_aq0) | (ud_2_6_5_bq1 && !ud_2_6_5_aq1) | (ud_2_6_5_bq2 && !ud_2_6_5_aq1);
+  wire [7:0] ud_2_6_5_bestr_mask = ud_2_6_5_bestr_right ? {1'b0, ud_2_5_5_best_mask} : {1'b1, ud_1_6_5_best_mask};
+  wire ud_2_6_5_best_q0 = ud_2_6_4_best_q0 || ud_2_6_5_bestr_q0;
+  wire ud_2_6_5_best_q1 = ud_2_6_4_best_q1 || ud_2_6_5_bestr_q1;
+  wire ud_2_6_5_best_right = !((ud_2_6_4_best_q0 && !ud_2_6_5_bestr_q0) | (ud_2_6_4_best_q1 && !ud_2_6_5_bestr_q1) | (1'b1 && !ud_2_6_5_bestr_q2));
+  wire [7:0] ud_2_6_5_best_mask = ud_2_6_5_best_right ? ud_2_6_5_bestr_mask : ud_2_6_4_best_mask;
+  wire ud_2_6_6_aq0 = (1'b1 && ud_2_6_ge_m5);
+  wire ud_2_6_6_aq1 = ud_2_6_6_aq0 || (1'b1 && ud_2_6_ge_m4);
+  wire ud_2_6_6_best_right = !((ud_2_6_5_best_q0 && !ud_2_6_6_aq0) | (ud_2_6_5_best_q1 && !ud_2_6_6_aq1) | (1'b1 && !ud_2_6_6_aq1));
+  wire [7:0] ud_2_6_6_best_mask = ud_2_6_6_best_right ? {1'b1, ud_1_6_6_best_mask} : ud_2_6_5_best_mask;
+//
+// DP PREFIX (3,1): share one signed prefix difference across
+// all A-waiting budgets d=0..1; each retained mask has 4 issue bits.
+//
+  wire [8:0] ud_3_1_diff_cla_p = ud_pa_2 ^ ~ud_pb_0;
+  wire [8:0] ud_3_1_diff_cla_g = ud_pa_2 & ~ud_pb_0;
+  wire ud_3_1_diff_cla_c0 = 1'b1;
+  wire ud_3_1_diff_cla_c1 = (ud_3_1_diff_cla_g[0]) || (ud_3_1_diff_cla_c0 && ud_3_1_diff_cla_p[0]);
+  wire ud_3_1_diff_cla_c2 = (ud_3_1_diff_cla_g[0] && ud_3_1_diff_cla_p[1]) || (ud_3_1_diff_cla_g[1]) || (ud_3_1_diff_cla_c0 && ud_3_1_diff_cla_p[0] && ud_3_1_diff_cla_p[1]);
+  wire ud_3_1_diff_cla_c3 = (ud_3_1_diff_cla_g[0] && ud_3_1_diff_cla_p[1] && ud_3_1_diff_cla_p[2]) || (ud_3_1_diff_cla_g[1] && ud_3_1_diff_cla_p[2]) || (ud_3_1_diff_cla_g[2]) || (ud_3_1_diff_cla_c0 && ud_3_1_diff_cla_p[0] && ud_3_1_diff_cla_p[1] && ud_3_1_diff_cla_p[2]);
+  wire ud_3_1_diff_cla_c4 = (ud_3_1_diff_cla_g[3]) || (ud_3_1_diff_cla_c3 && ud_3_1_diff_cla_p[3]);
+  wire ud_3_1_diff_cla_c5 = (ud_3_1_diff_cla_g[3] && ud_3_1_diff_cla_p[4]) || (ud_3_1_diff_cla_g[4]) || (ud_3_1_diff_cla_c3 && ud_3_1_diff_cla_p[3] && ud_3_1_diff_cla_p[4]);
+  wire ud_3_1_diff_cla_c6 = (ud_3_1_diff_cla_g[3] && ud_3_1_diff_cla_p[4] && ud_3_1_diff_cla_p[5]) || (ud_3_1_diff_cla_g[4] && ud_3_1_diff_cla_p[5]) || (ud_3_1_diff_cla_g[5]) || (ud_3_1_diff_cla_c3 && ud_3_1_diff_cla_p[3] && ud_3_1_diff_cla_p[4] && ud_3_1_diff_cla_p[5]);
+  wire ud_3_1_diff_cla_c7 = (ud_3_1_diff_cla_g[6]) || (ud_3_1_diff_cla_c6 && ud_3_1_diff_cla_p[6]);
+  wire ud_3_1_diff_cla_c8 = (ud_3_1_diff_cla_g[6] && ud_3_1_diff_cla_p[7]) || (ud_3_1_diff_cla_g[7]) || (ud_3_1_diff_cla_c6 && ud_3_1_diff_cla_p[6] && ud_3_1_diff_cla_p[7]);
+  wire ud_3_1_diff_cla_c9 = (ud_3_1_diff_cla_g[6] && ud_3_1_diff_cla_p[7] && ud_3_1_diff_cla_p[8]) || (ud_3_1_diff_cla_g[7] && ud_3_1_diff_cla_p[8]) || (ud_3_1_diff_cla_g[8]) || (ud_3_1_diff_cla_c6 && ud_3_1_diff_cla_p[6] && ud_3_1_diff_cla_p[7] && ud_3_1_diff_cla_p[8]);
+  wire [9:0] ud_3_1_diff = {!ud_3_1_diff_cla_c9, (ud_3_1_diff_cla_p ^ {ud_3_1_diff_cla_c8, ud_3_1_diff_cla_c7, ud_3_1_diff_cla_c6, ud_3_1_diff_cla_c5, ud_3_1_diff_cla_c4, ud_3_1_diff_cla_c3, ud_3_1_diff_cla_c2, ud_3_1_diff_cla_c1, ud_3_1_diff_cla_c0})};
+  wire ud_3_1_ge_1 = !ud_3_1_diff[9] && ((|ud_3_1_diff[8:3]) || ud_3_1_diff[2:0] >= 3'd1);
+  wire ud_3_1_0_aq0 = (1'b0 && ud_3_1_ge_1);
+  wire ud_3_1_ge_2 = !ud_3_1_diff[9] && ((|ud_3_1_diff[8:3]) || ud_3_1_diff[2:0] >= 3'd2);
+  wire ud_3_1_0_aq1 = ud_3_1_0_aq0 || (ud_2_1_0_best_q1 && ud_3_1_ge_2);
+  wire ud_3_1_ge_3 = !ud_3_1_diff[9] && ((|ud_3_1_diff[8:3]) || ud_3_1_diff[2:0] >= 3'd3);
+  wire ud_3_1_0_aq2 = ud_3_1_0_aq1 || (1'b1 && ud_3_1_ge_3);
+  wire ud_3_1_ge_0 = !ud_3_1_diff[9];
+  wire ud_3_1_0_bq0 = 1'b1 && !ud_3_1_ge_0;
+  wire ud_3_1_0_bq1 = 1'b1 && !ud_3_1_ge_1;
+  wire ud_3_1_0_bq2 = 1'b1 && !ud_3_1_ge_2;
+  wire ud_3_1_0_bq3 = 1'b1 && !ud_3_1_ge_3;
+  wire ud_3_1_0_best_q1 = ud_3_1_0_aq1 || ud_3_1_0_bq1;
+  wire ud_3_1_0_best_q2 = ud_3_1_0_aq2 || ud_3_1_0_bq2;
+  wire ud_3_1_0_best_right = !((ud_3_1_0_aq0 && !ud_3_1_0_bq0) | (ud_3_1_0_aq1 && !ud_3_1_0_bq1) | (ud_3_1_0_aq2 && !ud_3_1_0_bq2) | (ud_3_1_0_aq2 && !ud_3_1_0_bq3));
+  wire [3:0] ud_3_1_0_best_mask = ud_3_1_0_best_right ? {1'b0, 3'd7} : {1'b1, ud_2_1_0_best_mask};
+  wire ud_3_1_1_aq0 = (1'b1 && ud_3_1_ge_0);
+  wire ud_3_1_1_aq1 = ud_3_1_1_aq0 || (1'b1 && ud_3_1_ge_1);
+  wire ud_3_1_1_aq2 = ud_3_1_1_aq1 || (1'b1 && ud_3_1_ge_2);
+  wire ud_3_1_1_best_right = !((1'b0 && !ud_3_1_1_aq0) | (ud_3_1_0_best_q1 && !ud_3_1_1_aq1) | (ud_3_1_0_best_q2 && !ud_3_1_1_aq2) | (1'b1 && !ud_3_1_1_aq2));
+  wire [3:0] ud_3_1_1_best_mask = ud_3_1_1_best_right ? {1'b1, ud_2_1_1_best_mask} : ud_3_1_0_best_mask;
+//
+// DP PREFIX (3,2): share one signed prefix difference across
+// all A-waiting budgets d=0..2; each retained mask has 5 issue bits.
+//
+  wire [8:0] ud_3_2_diff_cla_p = ud_pa_2 ^ ~ud_pb_1;
+  wire [8:0] ud_3_2_diff_cla_g = ud_pa_2 & ~ud_pb_1;
+  wire ud_3_2_diff_cla_c0 = 1'b1;
+  wire ud_3_2_diff_cla_c1 = (ud_3_2_diff_cla_g[0]) || (ud_3_2_diff_cla_c0 && ud_3_2_diff_cla_p[0]);
+  wire ud_3_2_diff_cla_c2 = (ud_3_2_diff_cla_g[0] && ud_3_2_diff_cla_p[1]) || (ud_3_2_diff_cla_g[1]) || (ud_3_2_diff_cla_c0 && ud_3_2_diff_cla_p[0] && ud_3_2_diff_cla_p[1]);
+  wire ud_3_2_diff_cla_c3 = (ud_3_2_diff_cla_g[0] && ud_3_2_diff_cla_p[1] && ud_3_2_diff_cla_p[2]) || (ud_3_2_diff_cla_g[1] && ud_3_2_diff_cla_p[2]) || (ud_3_2_diff_cla_g[2]) || (ud_3_2_diff_cla_c0 && ud_3_2_diff_cla_p[0] && ud_3_2_diff_cla_p[1] && ud_3_2_diff_cla_p[2]);
+  wire ud_3_2_diff_cla_c4 = (ud_3_2_diff_cla_g[3]) || (ud_3_2_diff_cla_c3 && ud_3_2_diff_cla_p[3]);
+  wire ud_3_2_diff_cla_c5 = (ud_3_2_diff_cla_g[3] && ud_3_2_diff_cla_p[4]) || (ud_3_2_diff_cla_g[4]) || (ud_3_2_diff_cla_c3 && ud_3_2_diff_cla_p[3] && ud_3_2_diff_cla_p[4]);
+  wire ud_3_2_diff_cla_c6 = (ud_3_2_diff_cla_g[3] && ud_3_2_diff_cla_p[4] && ud_3_2_diff_cla_p[5]) || (ud_3_2_diff_cla_g[4] && ud_3_2_diff_cla_p[5]) || (ud_3_2_diff_cla_g[5]) || (ud_3_2_diff_cla_c3 && ud_3_2_diff_cla_p[3] && ud_3_2_diff_cla_p[4] && ud_3_2_diff_cla_p[5]);
+  wire ud_3_2_diff_cla_c7 = (ud_3_2_diff_cla_g[6]) || (ud_3_2_diff_cla_c6 && ud_3_2_diff_cla_p[6]);
+  wire ud_3_2_diff_cla_c8 = (ud_3_2_diff_cla_g[6] && ud_3_2_diff_cla_p[7]) || (ud_3_2_diff_cla_g[7]) || (ud_3_2_diff_cla_c6 && ud_3_2_diff_cla_p[6] && ud_3_2_diff_cla_p[7]);
+  wire ud_3_2_diff_cla_c9 = (ud_3_2_diff_cla_g[6] && ud_3_2_diff_cla_p[7] && ud_3_2_diff_cla_p[8]) || (ud_3_2_diff_cla_g[7] && ud_3_2_diff_cla_p[8]) || (ud_3_2_diff_cla_g[8]) || (ud_3_2_diff_cla_c6 && ud_3_2_diff_cla_p[6] && ud_3_2_diff_cla_p[7] && ud_3_2_diff_cla_p[8]);
+  wire [9:0] ud_3_2_diff = {!ud_3_2_diff_cla_c9, (ud_3_2_diff_cla_p ^ {ud_3_2_diff_cla_c8, ud_3_2_diff_cla_c7, ud_3_2_diff_cla_c6, ud_3_2_diff_cla_c5, ud_3_2_diff_cla_c4, ud_3_2_diff_cla_c3, ud_3_2_diff_cla_c2, ud_3_2_diff_cla_c1, ud_3_2_diff_cla_c0})};
+  wire ud_3_2_ge_1 = !ud_3_2_diff[9] && ((|ud_3_2_diff[8:3]) || ud_3_2_diff[2:0] >= 3'd1);
+  wire ud_3_2_0_aq0 = (1'b0 && ud_3_2_ge_1);
+  wire ud_3_2_ge_2 = !ud_3_2_diff[9] && ((|ud_3_2_diff[8:3]) || ud_3_2_diff[2:0] >= 3'd2);
+  wire ud_3_2_0_aq1 = ud_3_2_0_aq0 || (ud_2_2_0_best_q1 && ud_3_2_ge_2);
+  wire ud_3_2_ge_3 = !ud_3_2_diff[9] && ((|ud_3_2_diff[8:3]) || ud_3_2_diff[2:0] >= 3'd3);
+  wire ud_3_2_0_aq2 = ud_3_2_0_aq1 || (1'b1 && ud_3_2_ge_3);
+  wire ud_3_2_ge_0 = !ud_3_2_diff[9];
+  wire ud_3_2_0_bq0 = 1'b0 && !ud_3_2_ge_0;
+  wire ud_3_2_0_bq1 = ud_3_1_0_best_q1 && !ud_3_2_ge_1;
+  wire ud_3_2_0_bq2 = ud_3_1_0_best_q2 && !ud_3_2_ge_2;
+  wire ud_3_2_0_bq3 = 1'b1 && !ud_3_2_ge_3;
+  wire ud_3_2_0_best_q1 = ud_3_2_0_aq1 || ud_3_2_0_bq1;
+  wire ud_3_2_0_best_q2 = ud_3_2_0_aq2 || ud_3_2_0_bq2;
+  wire ud_3_2_0_best_right = !((ud_3_2_0_aq0 && !ud_3_2_0_bq0) | (ud_3_2_0_aq1 && !ud_3_2_0_bq1) | (ud_3_2_0_aq2 && !ud_3_2_0_bq2) | (ud_3_2_0_aq2 && !ud_3_2_0_bq3));
+  wire [4:0] ud_3_2_0_best_mask = ud_3_2_0_best_right ? {1'b0, ud_3_1_0_best_mask} : {1'b1, ud_2_2_0_best_mask};
+  wire ud_3_2_1_aq0 = (ud_2_2_1_best_q0 && ud_3_2_ge_0);
+  wire ud_3_2_1_aq1 = ud_3_2_1_aq0 || (ud_2_2_1_best_q1 && ud_3_2_ge_1);
+  wire ud_3_2_1_aq2 = ud_3_2_1_aq1 || (1'b1 && ud_3_2_ge_2);
+  wire ud_3_2_ge_m1 = !ud_3_2_diff[9] || ((&ud_3_2_diff[8:3]) && ud_3_2_diff[2:0] >= 3'd7);
+  wire ud_3_2_1_bq0 = 1'b1 && !ud_3_2_ge_m1;
+  wire ud_3_2_1_bq1 = 1'b1 && !ud_3_2_ge_0;
+  wire ud_3_2_1_bq2 = 1'b1 && !ud_3_2_ge_1;
+  wire ud_3_2_1_bq3 = 1'b1 && !ud_3_2_ge_2;
+  wire ud_3_2_1_bestr_q0 = ud_3_2_1_aq0 || ud_3_2_1_bq0;
+  wire ud_3_2_1_bestr_q1 = ud_3_2_1_aq1 || ud_3_2_1_bq1;
+  wire ud_3_2_1_bestr_q2 = ud_3_2_1_aq2 || ud_3_2_1_bq2;
+  wire ud_3_2_1_bestr_q3 = ud_3_2_1_aq2 || ud_3_2_1_bq3;
+  wire ud_3_2_1_bestr_right = (ud_3_2_1_bq0 && !ud_3_2_1_aq0) | (ud_3_2_1_bq1 && !ud_3_2_1_aq1) | (ud_3_2_1_bq2 && !ud_3_2_1_aq2) | (ud_3_2_1_bq3 && !ud_3_2_1_aq2);
+  wire [4:0] ud_3_2_1_bestr_mask = ud_3_2_1_bestr_right ? {1'b0, ud_3_1_1_best_mask} : {1'b1, ud_2_2_1_best_mask};
+  wire ud_3_2_1_best_q0 = 1'b0 || ud_3_2_1_bestr_q0;
+  wire ud_3_2_1_best_q1 = ud_3_2_0_best_q1 || ud_3_2_1_bestr_q1;
+  wire ud_3_2_1_best_q2 = ud_3_2_0_best_q2 || ud_3_2_1_bestr_q2;
+  wire ud_3_2_1_best_right = !((1'b0 && !ud_3_2_1_bestr_q0) | (ud_3_2_0_best_q1 && !ud_3_2_1_bestr_q1) | (ud_3_2_0_best_q2 && !ud_3_2_1_bestr_q2) | (1'b1 && !ud_3_2_1_bestr_q3));
+  wire [4:0] ud_3_2_1_best_mask = ud_3_2_1_best_right ? ud_3_2_1_bestr_mask : ud_3_2_0_best_mask;
+  wire ud_3_2_2_aq0 = (1'b1 && ud_3_2_ge_m1);
+  wire ud_3_2_2_aq1 = ud_3_2_2_aq0 || (1'b1 && ud_3_2_ge_0);
+  wire ud_3_2_2_aq2 = ud_3_2_2_aq1 || (1'b1 && ud_3_2_ge_1);
+  wire ud_3_2_2_best_right = !((ud_3_2_1_best_q0 && !ud_3_2_2_aq0) | (ud_3_2_1_best_q1 && !ud_3_2_2_aq1) | (ud_3_2_1_best_q2 && !ud_3_2_2_aq2) | (1'b1 && !ud_3_2_2_aq2));
+  wire [4:0] ud_3_2_2_best_mask = ud_3_2_2_best_right ? {1'b1, ud_2_2_2_best_mask} : ud_3_2_1_best_mask;
+//
+// DP PREFIX (3,3): share one signed prefix difference across
+// all A-waiting budgets d=0..3; each retained mask has 6 issue bits.
+//
+  wire [8:0] ud_3_3_diff_cla_p = ud_pa_2 ^ ~ud_pb_2;
+  wire [8:0] ud_3_3_diff_cla_g = ud_pa_2 & ~ud_pb_2;
+  wire ud_3_3_diff_cla_c0 = 1'b1;
+  wire ud_3_3_diff_cla_c1 = (ud_3_3_diff_cla_g[0]) || (ud_3_3_diff_cla_c0 && ud_3_3_diff_cla_p[0]);
+  wire ud_3_3_diff_cla_c2 = (ud_3_3_diff_cla_g[0] && ud_3_3_diff_cla_p[1]) || (ud_3_3_diff_cla_g[1]) || (ud_3_3_diff_cla_c0 && ud_3_3_diff_cla_p[0] && ud_3_3_diff_cla_p[1]);
+  wire ud_3_3_diff_cla_c3 = (ud_3_3_diff_cla_g[0] && ud_3_3_diff_cla_p[1] && ud_3_3_diff_cla_p[2]) || (ud_3_3_diff_cla_g[1] && ud_3_3_diff_cla_p[2]) || (ud_3_3_diff_cla_g[2]) || (ud_3_3_diff_cla_c0 && ud_3_3_diff_cla_p[0] && ud_3_3_diff_cla_p[1] && ud_3_3_diff_cla_p[2]);
+  wire ud_3_3_diff_cla_c4 = (ud_3_3_diff_cla_g[3]) || (ud_3_3_diff_cla_c3 && ud_3_3_diff_cla_p[3]);
+  wire ud_3_3_diff_cla_c5 = (ud_3_3_diff_cla_g[3] && ud_3_3_diff_cla_p[4]) || (ud_3_3_diff_cla_g[4]) || (ud_3_3_diff_cla_c3 && ud_3_3_diff_cla_p[3] && ud_3_3_diff_cla_p[4]);
+  wire ud_3_3_diff_cla_c6 = (ud_3_3_diff_cla_g[3] && ud_3_3_diff_cla_p[4] && ud_3_3_diff_cla_p[5]) || (ud_3_3_diff_cla_g[4] && ud_3_3_diff_cla_p[5]) || (ud_3_3_diff_cla_g[5]) || (ud_3_3_diff_cla_c3 && ud_3_3_diff_cla_p[3] && ud_3_3_diff_cla_p[4] && ud_3_3_diff_cla_p[5]);
+  wire ud_3_3_diff_cla_c7 = (ud_3_3_diff_cla_g[6]) || (ud_3_3_diff_cla_c6 && ud_3_3_diff_cla_p[6]);
+  wire ud_3_3_diff_cla_c8 = (ud_3_3_diff_cla_g[6] && ud_3_3_diff_cla_p[7]) || (ud_3_3_diff_cla_g[7]) || (ud_3_3_diff_cla_c6 && ud_3_3_diff_cla_p[6] && ud_3_3_diff_cla_p[7]);
+  wire ud_3_3_diff_cla_c9 = (ud_3_3_diff_cla_g[6] && ud_3_3_diff_cla_p[7] && ud_3_3_diff_cla_p[8]) || (ud_3_3_diff_cla_g[7] && ud_3_3_diff_cla_p[8]) || (ud_3_3_diff_cla_g[8]) || (ud_3_3_diff_cla_c6 && ud_3_3_diff_cla_p[6] && ud_3_3_diff_cla_p[7] && ud_3_3_diff_cla_p[8]);
+  wire [9:0] ud_3_3_diff = {!ud_3_3_diff_cla_c9, (ud_3_3_diff_cla_p ^ {ud_3_3_diff_cla_c8, ud_3_3_diff_cla_c7, ud_3_3_diff_cla_c6, ud_3_3_diff_cla_c5, ud_3_3_diff_cla_c4, ud_3_3_diff_cla_c3, ud_3_3_diff_cla_c2, ud_3_3_diff_cla_c1, ud_3_3_diff_cla_c0})};
+  wire ud_3_3_ge_1 = !ud_3_3_diff[9] && ((|ud_3_3_diff[8:3]) || ud_3_3_diff[2:0] >= 3'd1);
+  wire ud_3_3_0_aq0 = (1'b0 && ud_3_3_ge_1);
+  wire ud_3_3_ge_2 = !ud_3_3_diff[9] && ((|ud_3_3_diff[8:3]) || ud_3_3_diff[2:0] >= 3'd2);
+  wire ud_3_3_0_aq1 = ud_3_3_0_aq0 || (ud_2_3_0_best_q1 && ud_3_3_ge_2);
+  wire ud_3_3_ge_3 = !ud_3_3_diff[9] && ((|ud_3_3_diff[8:3]) || ud_3_3_diff[2:0] >= 3'd3);
+  wire ud_3_3_0_aq2 = ud_3_3_0_aq1 || (1'b1 && ud_3_3_ge_3);
+  wire ud_3_3_ge_0 = !ud_3_3_diff[9];
+  wire ud_3_3_0_bq0 = 1'b0 && !ud_3_3_ge_0;
+  wire ud_3_3_0_bq1 = ud_3_2_0_best_q1 && !ud_3_3_ge_1;
+  wire ud_3_3_0_bq2 = ud_3_2_0_best_q2 && !ud_3_3_ge_2;
+  wire ud_3_3_0_bq3 = 1'b1 && !ud_3_3_ge_3;
+  wire ud_3_3_0_best_q1 = ud_3_3_0_aq1 || ud_3_3_0_bq1;
+  wire ud_3_3_0_best_q2 = ud_3_3_0_aq2 || ud_3_3_0_bq2;
+  wire ud_3_3_0_best_right = !((ud_3_3_0_aq0 && !ud_3_3_0_bq0) | (ud_3_3_0_aq1 && !ud_3_3_0_bq1) | (ud_3_3_0_aq2 && !ud_3_3_0_bq2) | (ud_3_3_0_aq2 && !ud_3_3_0_bq3));
+  wire [5:0] ud_3_3_0_best_mask = ud_3_3_0_best_right ? {1'b0, ud_3_2_0_best_mask} : {1'b1, ud_2_3_0_best_mask};
+  wire ud_3_3_1_aq0 = (ud_2_3_1_best_q0 && ud_3_3_ge_0);
+  wire ud_3_3_1_aq1 = ud_3_3_1_aq0 || (ud_2_3_1_best_q1 && ud_3_3_ge_1);
+  wire ud_3_3_1_aq2 = ud_3_3_1_aq1 || (1'b1 && ud_3_3_ge_2);
+  wire ud_3_3_ge_m1 = !ud_3_3_diff[9] || ((&ud_3_3_diff[8:3]) && ud_3_3_diff[2:0] >= 3'd7);
+  wire ud_3_3_1_bq0 = ud_3_2_1_best_q0 && !ud_3_3_ge_m1;
+  wire ud_3_3_1_bq1 = ud_3_2_1_best_q1 && !ud_3_3_ge_0;
+  wire ud_3_3_1_bq2 = ud_3_2_1_best_q2 && !ud_3_3_ge_1;
+  wire ud_3_3_1_bq3 = 1'b1 && !ud_3_3_ge_2;
+  wire ud_3_3_1_bestr_q0 = ud_3_3_1_aq0 || ud_3_3_1_bq0;
+  wire ud_3_3_1_bestr_q1 = ud_3_3_1_aq1 || ud_3_3_1_bq1;
+  wire ud_3_3_1_bestr_q2 = ud_3_3_1_aq2 || ud_3_3_1_bq2;
+  wire ud_3_3_1_bestr_q3 = ud_3_3_1_aq2 || ud_3_3_1_bq3;
+  wire ud_3_3_1_bestr_right = (ud_3_3_1_bq0 && !ud_3_3_1_aq0) | (ud_3_3_1_bq1 && !ud_3_3_1_aq1) | (ud_3_3_1_bq2 && !ud_3_3_1_aq2) | (ud_3_3_1_bq3 && !ud_3_3_1_aq2);
+  wire [5:0] ud_3_3_1_bestr_mask = ud_3_3_1_bestr_right ? {1'b0, ud_3_2_1_best_mask} : {1'b1, ud_2_3_1_best_mask};
+  wire ud_3_3_1_best_q0 = 1'b0 || ud_3_3_1_bestr_q0;
+  wire ud_3_3_1_best_q1 = ud_3_3_0_best_q1 || ud_3_3_1_bestr_q1;
+  wire ud_3_3_1_best_q2 = ud_3_3_0_best_q2 || ud_3_3_1_bestr_q2;
+  wire ud_3_3_1_best_right = !((1'b0 && !ud_3_3_1_bestr_q0) | (ud_3_3_0_best_q1 && !ud_3_3_1_bestr_q1) | (ud_3_3_0_best_q2 && !ud_3_3_1_bestr_q2) | (1'b1 && !ud_3_3_1_bestr_q3));
+  wire [5:0] ud_3_3_1_best_mask = ud_3_3_1_best_right ? ud_3_3_1_bestr_mask : ud_3_3_0_best_mask;
+  wire ud_3_3_2_aq0 = (ud_2_3_2_best_q0 && ud_3_3_ge_m1);
+  wire ud_3_3_2_aq1 = ud_3_3_2_aq0 || (ud_2_3_2_best_q1 && ud_3_3_ge_0);
+  wire ud_3_3_2_aq2 = ud_3_3_2_aq1 || (1'b1 && ud_3_3_ge_1);
+  wire ud_3_3_ge_m2 = !ud_3_3_diff[9] || ((&ud_3_3_diff[8:3]) && ud_3_3_diff[2:0] >= 3'd6);
+  wire ud_3_3_2_bq0 = 1'b1 && !ud_3_3_ge_m2;
+  wire ud_3_3_2_bq1 = 1'b1 && !ud_3_3_ge_m1;
+  wire ud_3_3_2_bq2 = 1'b1 && !ud_3_3_ge_0;
+  wire ud_3_3_2_bq3 = 1'b1 && !ud_3_3_ge_1;
+  wire ud_3_3_2_bestr_q0 = ud_3_3_2_aq0 || ud_3_3_2_bq0;
+  wire ud_3_3_2_bestr_q1 = ud_3_3_2_aq1 || ud_3_3_2_bq1;
+  wire ud_3_3_2_bestr_q2 = ud_3_3_2_aq2 || ud_3_3_2_bq2;
+  wire ud_3_3_2_bestr_q3 = ud_3_3_2_aq2 || ud_3_3_2_bq3;
+  wire ud_3_3_2_bestr_right = (ud_3_3_2_bq0 && !ud_3_3_2_aq0) | (ud_3_3_2_bq1 && !ud_3_3_2_aq1) | (ud_3_3_2_bq2 && !ud_3_3_2_aq2) | (ud_3_3_2_bq3 && !ud_3_3_2_aq2);
+  wire [5:0] ud_3_3_2_bestr_mask = ud_3_3_2_bestr_right ? {1'b0, ud_3_2_2_best_mask} : {1'b1, ud_2_3_2_best_mask};
+  wire ud_3_3_2_best_q0 = ud_3_3_1_best_q0 || ud_3_3_2_bestr_q0;
+  wire ud_3_3_2_best_q1 = ud_3_3_1_best_q1 || ud_3_3_2_bestr_q1;
+  wire ud_3_3_2_best_q2 = ud_3_3_1_best_q2 || ud_3_3_2_bestr_q2;
+  wire ud_3_3_2_best_right = !((ud_3_3_1_best_q0 && !ud_3_3_2_bestr_q0) | (ud_3_3_1_best_q1 && !ud_3_3_2_bestr_q1) | (ud_3_3_1_best_q2 && !ud_3_3_2_bestr_q2) | (1'b1 && !ud_3_3_2_bestr_q3));
+  wire [5:0] ud_3_3_2_best_mask = ud_3_3_2_best_right ? ud_3_3_2_bestr_mask : ud_3_3_1_best_mask;
+  wire ud_3_3_3_aq0 = (1'b1 && ud_3_3_ge_m2);
+  wire ud_3_3_3_aq1 = ud_3_3_3_aq0 || (1'b1 && ud_3_3_ge_m1);
+  wire ud_3_3_3_aq2 = ud_3_3_3_aq1 || (1'b1 && ud_3_3_ge_0);
+  wire ud_3_3_3_best_right = !((ud_3_3_2_best_q0 && !ud_3_3_3_aq0) | (ud_3_3_2_best_q1 && !ud_3_3_3_aq1) | (ud_3_3_2_best_q2 && !ud_3_3_3_aq2) | (1'b1 && !ud_3_3_3_aq2));
+  wire [5:0] ud_3_3_3_best_mask = ud_3_3_3_best_right ? {1'b1, ud_2_3_3_best_mask} : ud_3_3_2_best_mask;
+//
+// DP PREFIX (3,4): share one signed prefix difference across
+// all A-waiting budgets d=0..4; each retained mask has 7 issue bits.
+//
+  wire [8:0] ud_3_4_diff_cla_p = ud_pa_2 ^ ~ud_pb_3;
+  wire [8:0] ud_3_4_diff_cla_g = ud_pa_2 & ~ud_pb_3;
+  wire ud_3_4_diff_cla_c0 = 1'b1;
+  wire ud_3_4_diff_cla_c1 = (ud_3_4_diff_cla_g[0]) || (ud_3_4_diff_cla_c0 && ud_3_4_diff_cla_p[0]);
+  wire ud_3_4_diff_cla_c2 = (ud_3_4_diff_cla_g[0] && ud_3_4_diff_cla_p[1]) || (ud_3_4_diff_cla_g[1]) || (ud_3_4_diff_cla_c0 && ud_3_4_diff_cla_p[0] && ud_3_4_diff_cla_p[1]);
+  wire ud_3_4_diff_cla_c3 = (ud_3_4_diff_cla_g[0] && ud_3_4_diff_cla_p[1] && ud_3_4_diff_cla_p[2]) || (ud_3_4_diff_cla_g[1] && ud_3_4_diff_cla_p[2]) || (ud_3_4_diff_cla_g[2]) || (ud_3_4_diff_cla_c0 && ud_3_4_diff_cla_p[0] && ud_3_4_diff_cla_p[1] && ud_3_4_diff_cla_p[2]);
+  wire ud_3_4_diff_cla_c4 = (ud_3_4_diff_cla_g[3]) || (ud_3_4_diff_cla_c3 && ud_3_4_diff_cla_p[3]);
+  wire ud_3_4_diff_cla_c5 = (ud_3_4_diff_cla_g[3] && ud_3_4_diff_cla_p[4]) || (ud_3_4_diff_cla_g[4]) || (ud_3_4_diff_cla_c3 && ud_3_4_diff_cla_p[3] && ud_3_4_diff_cla_p[4]);
+  wire ud_3_4_diff_cla_c6 = (ud_3_4_diff_cla_g[3] && ud_3_4_diff_cla_p[4] && ud_3_4_diff_cla_p[5]) || (ud_3_4_diff_cla_g[4] && ud_3_4_diff_cla_p[5]) || (ud_3_4_diff_cla_g[5]) || (ud_3_4_diff_cla_c3 && ud_3_4_diff_cla_p[3] && ud_3_4_diff_cla_p[4] && ud_3_4_diff_cla_p[5]);
+  wire ud_3_4_diff_cla_c7 = (ud_3_4_diff_cla_g[6]) || (ud_3_4_diff_cla_c6 && ud_3_4_diff_cla_p[6]);
+  wire ud_3_4_diff_cla_c8 = (ud_3_4_diff_cla_g[6] && ud_3_4_diff_cla_p[7]) || (ud_3_4_diff_cla_g[7]) || (ud_3_4_diff_cla_c6 && ud_3_4_diff_cla_p[6] && ud_3_4_diff_cla_p[7]);
+  wire ud_3_4_diff_cla_c9 = (ud_3_4_diff_cla_g[6] && ud_3_4_diff_cla_p[7] && ud_3_4_diff_cla_p[8]) || (ud_3_4_diff_cla_g[7] && ud_3_4_diff_cla_p[8]) || (ud_3_4_diff_cla_g[8]) || (ud_3_4_diff_cla_c6 && ud_3_4_diff_cla_p[6] && ud_3_4_diff_cla_p[7] && ud_3_4_diff_cla_p[8]);
+  wire [9:0] ud_3_4_diff = {!ud_3_4_diff_cla_c9, (ud_3_4_diff_cla_p ^ {ud_3_4_diff_cla_c8, ud_3_4_diff_cla_c7, ud_3_4_diff_cla_c6, ud_3_4_diff_cla_c5, ud_3_4_diff_cla_c4, ud_3_4_diff_cla_c3, ud_3_4_diff_cla_c2, ud_3_4_diff_cla_c1, ud_3_4_diff_cla_c0})};
+  wire ud_3_4_ge_1 = !ud_3_4_diff[9] && ((|ud_3_4_diff[8:3]) || ud_3_4_diff[2:0] >= 3'd1);
+  wire ud_3_4_0_aq0 = (1'b0 && ud_3_4_ge_1);
+  wire ud_3_4_ge_2 = !ud_3_4_diff[9] && ((|ud_3_4_diff[8:3]) || ud_3_4_diff[2:0] >= 3'd2);
+  wire ud_3_4_0_aq1 = ud_3_4_0_aq0 || (ud_2_4_0_best_q1 && ud_3_4_ge_2);
+  wire ud_3_4_ge_3 = !ud_3_4_diff[9] && ((|ud_3_4_diff[8:3]) || ud_3_4_diff[2:0] >= 3'd3);
+  wire ud_3_4_0_aq2 = ud_3_4_0_aq1 || (1'b1 && ud_3_4_ge_3);
+  wire ud_3_4_ge_0 = !ud_3_4_diff[9];
+  wire ud_3_4_0_bq0 = 1'b0 && !ud_3_4_ge_0;
+  wire ud_3_4_0_bq1 = ud_3_3_0_best_q1 && !ud_3_4_ge_1;
+  wire ud_3_4_0_bq2 = ud_3_3_0_best_q2 && !ud_3_4_ge_2;
+  wire ud_3_4_0_bq3 = 1'b1 && !ud_3_4_ge_3;
+  wire ud_3_4_0_best_q1 = ud_3_4_0_aq1 || ud_3_4_0_bq1;
+  wire ud_3_4_0_best_q2 = ud_3_4_0_aq2 || ud_3_4_0_bq2;
+  wire ud_3_4_0_best_right = !((ud_3_4_0_aq0 && !ud_3_4_0_bq0) | (ud_3_4_0_aq1 && !ud_3_4_0_bq1) | (ud_3_4_0_aq2 && !ud_3_4_0_bq2) | (ud_3_4_0_aq2 && !ud_3_4_0_bq3));
+  wire [6:0] ud_3_4_0_best_mask = ud_3_4_0_best_right ? {1'b0, ud_3_3_0_best_mask} : {1'b1, ud_2_4_0_best_mask};
+  wire ud_3_4_1_aq0 = (ud_2_4_1_best_q0 && ud_3_4_ge_0);
+  wire ud_3_4_1_aq1 = ud_3_4_1_aq0 || (ud_2_4_1_best_q1 && ud_3_4_ge_1);
+  wire ud_3_4_1_aq2 = ud_3_4_1_aq1 || (1'b1 && ud_3_4_ge_2);
+  wire ud_3_4_ge_m1 = !ud_3_4_diff[9] || ((&ud_3_4_diff[8:3]) && ud_3_4_diff[2:0] >= 3'd7);
+  wire ud_3_4_1_bq0 = ud_3_3_1_best_q0 && !ud_3_4_ge_m1;
+  wire ud_3_4_1_bq1 = ud_3_3_1_best_q1 && !ud_3_4_ge_0;
+  wire ud_3_4_1_bq2 = ud_3_3_1_best_q2 && !ud_3_4_ge_1;
+  wire ud_3_4_1_bq3 = 1'b1 && !ud_3_4_ge_2;
+  wire ud_3_4_1_bestr_q0 = ud_3_4_1_aq0 || ud_3_4_1_bq0;
+  wire ud_3_4_1_bestr_q1 = ud_3_4_1_aq1 || ud_3_4_1_bq1;
+  wire ud_3_4_1_bestr_q2 = ud_3_4_1_aq2 || ud_3_4_1_bq2;
+  wire ud_3_4_1_bestr_q3 = ud_3_4_1_aq2 || ud_3_4_1_bq3;
+  wire ud_3_4_1_bestr_right = (ud_3_4_1_bq0 && !ud_3_4_1_aq0) | (ud_3_4_1_bq1 && !ud_3_4_1_aq1) | (ud_3_4_1_bq2 && !ud_3_4_1_aq2) | (ud_3_4_1_bq3 && !ud_3_4_1_aq2);
+  wire [6:0] ud_3_4_1_bestr_mask = ud_3_4_1_bestr_right ? {1'b0, ud_3_3_1_best_mask} : {1'b1, ud_2_4_1_best_mask};
+  wire ud_3_4_1_best_q0 = 1'b0 || ud_3_4_1_bestr_q0;
+  wire ud_3_4_1_best_q1 = ud_3_4_0_best_q1 || ud_3_4_1_bestr_q1;
+  wire ud_3_4_1_best_q2 = ud_3_4_0_best_q2 || ud_3_4_1_bestr_q2;
+  wire ud_3_4_1_best_right = !((1'b0 && !ud_3_4_1_bestr_q0) | (ud_3_4_0_best_q1 && !ud_3_4_1_bestr_q1) | (ud_3_4_0_best_q2 && !ud_3_4_1_bestr_q2) | (1'b1 && !ud_3_4_1_bestr_q3));
+  wire [6:0] ud_3_4_1_best_mask = ud_3_4_1_best_right ? ud_3_4_1_bestr_mask : ud_3_4_0_best_mask;
+  wire ud_3_4_2_aq0 = (ud_2_4_2_best_q0 && ud_3_4_ge_m1);
+  wire ud_3_4_2_aq1 = ud_3_4_2_aq0 || (ud_2_4_2_best_q1 && ud_3_4_ge_0);
+  wire ud_3_4_2_aq2 = ud_3_4_2_aq1 || (1'b1 && ud_3_4_ge_1);
+  wire ud_3_4_ge_m2 = !ud_3_4_diff[9] || ((&ud_3_4_diff[8:3]) && ud_3_4_diff[2:0] >= 3'd6);
+  wire ud_3_4_2_bq0 = ud_3_3_2_best_q0 && !ud_3_4_ge_m2;
+  wire ud_3_4_2_bq1 = ud_3_3_2_best_q1 && !ud_3_4_ge_m1;
+  wire ud_3_4_2_bq2 = ud_3_3_2_best_q2 && !ud_3_4_ge_0;
+  wire ud_3_4_2_bq3 = 1'b1 && !ud_3_4_ge_1;
+  wire ud_3_4_2_bestr_q0 = ud_3_4_2_aq0 || ud_3_4_2_bq0;
+  wire ud_3_4_2_bestr_q1 = ud_3_4_2_aq1 || ud_3_4_2_bq1;
+  wire ud_3_4_2_bestr_q2 = ud_3_4_2_aq2 || ud_3_4_2_bq2;
+  wire ud_3_4_2_bestr_q3 = ud_3_4_2_aq2 || ud_3_4_2_bq3;
+  wire ud_3_4_2_bestr_right = (ud_3_4_2_bq0 && !ud_3_4_2_aq0) | (ud_3_4_2_bq1 && !ud_3_4_2_aq1) | (ud_3_4_2_bq2 && !ud_3_4_2_aq2) | (ud_3_4_2_bq3 && !ud_3_4_2_aq2);
+  wire [6:0] ud_3_4_2_bestr_mask = ud_3_4_2_bestr_right ? {1'b0, ud_3_3_2_best_mask} : {1'b1, ud_2_4_2_best_mask};
+  wire ud_3_4_2_best_q0 = ud_3_4_1_best_q0 || ud_3_4_2_bestr_q0;
+  wire ud_3_4_2_best_q1 = ud_3_4_1_best_q1 || ud_3_4_2_bestr_q1;
+  wire ud_3_4_2_best_q2 = ud_3_4_1_best_q2 || ud_3_4_2_bestr_q2;
+  wire ud_3_4_2_best_right = !((ud_3_4_1_best_q0 && !ud_3_4_2_bestr_q0) | (ud_3_4_1_best_q1 && !ud_3_4_2_bestr_q1) | (ud_3_4_1_best_q2 && !ud_3_4_2_bestr_q2) | (1'b1 && !ud_3_4_2_bestr_q3));
+  wire [6:0] ud_3_4_2_best_mask = ud_3_4_2_best_right ? ud_3_4_2_bestr_mask : ud_3_4_1_best_mask;
+  wire ud_3_4_3_aq0 = (ud_2_4_3_best_q0 && ud_3_4_ge_m2);
+  wire ud_3_4_3_aq1 = ud_3_4_3_aq0 || (ud_2_4_3_best_q1 && ud_3_4_ge_m1);
+  wire ud_3_4_3_aq2 = ud_3_4_3_aq1 || (1'b1 && ud_3_4_ge_0);
+  wire ud_3_4_ge_m3 = !ud_3_4_diff[9] || ((&ud_3_4_diff[8:3]) && ud_3_4_diff[2:0] >= 3'd5);
+  wire ud_3_4_3_bq0 = 1'b1 && !ud_3_4_ge_m3;
+  wire ud_3_4_3_bq1 = 1'b1 && !ud_3_4_ge_m2;
+  wire ud_3_4_3_bq2 = 1'b1 && !ud_3_4_ge_m1;
+  wire ud_3_4_3_bq3 = 1'b1 && !ud_3_4_ge_0;
+  wire ud_3_4_3_bestr_q0 = ud_3_4_3_aq0 || ud_3_4_3_bq0;
+  wire ud_3_4_3_bestr_q1 = ud_3_4_3_aq1 || ud_3_4_3_bq1;
+  wire ud_3_4_3_bestr_q2 = ud_3_4_3_aq2 || ud_3_4_3_bq2;
+  wire ud_3_4_3_bestr_q3 = ud_3_4_3_aq2 || ud_3_4_3_bq3;
+  wire ud_3_4_3_bestr_right = (ud_3_4_3_bq0 && !ud_3_4_3_aq0) | (ud_3_4_3_bq1 && !ud_3_4_3_aq1) | (ud_3_4_3_bq2 && !ud_3_4_3_aq2) | (ud_3_4_3_bq3 && !ud_3_4_3_aq2);
+  wire [6:0] ud_3_4_3_bestr_mask = ud_3_4_3_bestr_right ? {1'b0, ud_3_3_3_best_mask} : {1'b1, ud_2_4_3_best_mask};
+  wire ud_3_4_3_best_q0 = ud_3_4_2_best_q0 || ud_3_4_3_bestr_q0;
+  wire ud_3_4_3_best_q1 = ud_3_4_2_best_q1 || ud_3_4_3_bestr_q1;
+  wire ud_3_4_3_best_q2 = ud_3_4_2_best_q2 || ud_3_4_3_bestr_q2;
+  wire ud_3_4_3_best_right = !((ud_3_4_2_best_q0 && !ud_3_4_3_bestr_q0) | (ud_3_4_2_best_q1 && !ud_3_4_3_bestr_q1) | (ud_3_4_2_best_q2 && !ud_3_4_3_bestr_q2) | (1'b1 && !ud_3_4_3_bestr_q3));
+  wire [6:0] ud_3_4_3_best_mask = ud_3_4_3_best_right ? ud_3_4_3_bestr_mask : ud_3_4_2_best_mask;
+  wire ud_3_4_4_aq0 = (1'b1 && ud_3_4_ge_m3);
+  wire ud_3_4_4_aq1 = ud_3_4_4_aq0 || (1'b1 && ud_3_4_ge_m2);
+  wire ud_3_4_4_aq2 = ud_3_4_4_aq1 || (1'b1 && ud_3_4_ge_m1);
+  wire ud_3_4_4_best_right = !((ud_3_4_3_best_q0 && !ud_3_4_4_aq0) | (ud_3_4_3_best_q1 && !ud_3_4_4_aq1) | (ud_3_4_3_best_q2 && !ud_3_4_4_aq2) | (1'b1 && !ud_3_4_4_aq2));
+  wire [6:0] ud_3_4_4_best_mask = ud_3_4_4_best_right ? {1'b1, ud_2_4_4_best_mask} : ud_3_4_3_best_mask;
+//
+// DP PREFIX (3,5): share one signed prefix difference across
+// all A-waiting budgets d=0..5; each retained mask has 8 issue bits.
+//
+  wire [8:0] ud_3_5_diff_cla_p = ud_pa_2 ^ ~ud_pb_4;
+  wire [8:0] ud_3_5_diff_cla_g = ud_pa_2 & ~ud_pb_4;
+  wire ud_3_5_diff_cla_c0 = 1'b1;
+  wire ud_3_5_diff_cla_c1 = (ud_3_5_diff_cla_g[0]) || (ud_3_5_diff_cla_c0 && ud_3_5_diff_cla_p[0]);
+  wire ud_3_5_diff_cla_c2 = (ud_3_5_diff_cla_g[0] && ud_3_5_diff_cla_p[1]) || (ud_3_5_diff_cla_g[1]) || (ud_3_5_diff_cla_c0 && ud_3_5_diff_cla_p[0] && ud_3_5_diff_cla_p[1]);
+  wire ud_3_5_diff_cla_c3 = (ud_3_5_diff_cla_g[0] && ud_3_5_diff_cla_p[1] && ud_3_5_diff_cla_p[2]) || (ud_3_5_diff_cla_g[1] && ud_3_5_diff_cla_p[2]) || (ud_3_5_diff_cla_g[2]) || (ud_3_5_diff_cla_c0 && ud_3_5_diff_cla_p[0] && ud_3_5_diff_cla_p[1] && ud_3_5_diff_cla_p[2]);
+  wire ud_3_5_diff_cla_c4 = (ud_3_5_diff_cla_g[3]) || (ud_3_5_diff_cla_c3 && ud_3_5_diff_cla_p[3]);
+  wire ud_3_5_diff_cla_c5 = (ud_3_5_diff_cla_g[3] && ud_3_5_diff_cla_p[4]) || (ud_3_5_diff_cla_g[4]) || (ud_3_5_diff_cla_c3 && ud_3_5_diff_cla_p[3] && ud_3_5_diff_cla_p[4]);
+  wire ud_3_5_diff_cla_c6 = (ud_3_5_diff_cla_g[3] && ud_3_5_diff_cla_p[4] && ud_3_5_diff_cla_p[5]) || (ud_3_5_diff_cla_g[4] && ud_3_5_diff_cla_p[5]) || (ud_3_5_diff_cla_g[5]) || (ud_3_5_diff_cla_c3 && ud_3_5_diff_cla_p[3] && ud_3_5_diff_cla_p[4] && ud_3_5_diff_cla_p[5]);
+  wire ud_3_5_diff_cla_c7 = (ud_3_5_diff_cla_g[6]) || (ud_3_5_diff_cla_c6 && ud_3_5_diff_cla_p[6]);
+  wire ud_3_5_diff_cla_c8 = (ud_3_5_diff_cla_g[6] && ud_3_5_diff_cla_p[7]) || (ud_3_5_diff_cla_g[7]) || (ud_3_5_diff_cla_c6 && ud_3_5_diff_cla_p[6] && ud_3_5_diff_cla_p[7]);
+  wire ud_3_5_diff_cla_c9 = (ud_3_5_diff_cla_g[6] && ud_3_5_diff_cla_p[7] && ud_3_5_diff_cla_p[8]) || (ud_3_5_diff_cla_g[7] && ud_3_5_diff_cla_p[8]) || (ud_3_5_diff_cla_g[8]) || (ud_3_5_diff_cla_c6 && ud_3_5_diff_cla_p[6] && ud_3_5_diff_cla_p[7] && ud_3_5_diff_cla_p[8]);
+  wire [9:0] ud_3_5_diff = {!ud_3_5_diff_cla_c9, (ud_3_5_diff_cla_p ^ {ud_3_5_diff_cla_c8, ud_3_5_diff_cla_c7, ud_3_5_diff_cla_c6, ud_3_5_diff_cla_c5, ud_3_5_diff_cla_c4, ud_3_5_diff_cla_c3, ud_3_5_diff_cla_c2, ud_3_5_diff_cla_c1, ud_3_5_diff_cla_c0})};
+  wire ud_3_5_ge_1 = !ud_3_5_diff[9] && ((|ud_3_5_diff[8:3]) || ud_3_5_diff[2:0] >= 3'd1);
+  wire ud_3_5_0_aq0 = (1'b0 && ud_3_5_ge_1);
+  wire ud_3_5_ge_2 = !ud_3_5_diff[9] && ((|ud_3_5_diff[8:3]) || ud_3_5_diff[2:0] >= 3'd2);
+  wire ud_3_5_0_aq1 = ud_3_5_0_aq0 || (ud_2_5_0_best_q1 && ud_3_5_ge_2);
+  wire ud_3_5_ge_3 = !ud_3_5_diff[9] && ((|ud_3_5_diff[8:3]) || ud_3_5_diff[2:0] >= 3'd3);
+  wire ud_3_5_0_aq2 = ud_3_5_0_aq1 || (1'b1 && ud_3_5_ge_3);
+  wire ud_3_5_ge_0 = !ud_3_5_diff[9];
+  wire ud_3_5_0_bq0 = 1'b0 && !ud_3_5_ge_0;
+  wire ud_3_5_0_bq1 = ud_3_4_0_best_q1 && !ud_3_5_ge_1;
+  wire ud_3_5_0_bq2 = ud_3_4_0_best_q2 && !ud_3_5_ge_2;
+  wire ud_3_5_0_bq3 = 1'b1 && !ud_3_5_ge_3;
+  wire ud_3_5_0_best_q1 = ud_3_5_0_aq1 || ud_3_5_0_bq1;
+  wire ud_3_5_0_best_q2 = ud_3_5_0_aq2 || ud_3_5_0_bq2;
+  wire ud_3_5_0_best_right = !((ud_3_5_0_aq0 && !ud_3_5_0_bq0) | (ud_3_5_0_aq1 && !ud_3_5_0_bq1) | (ud_3_5_0_aq2 && !ud_3_5_0_bq2) | (ud_3_5_0_aq2 && !ud_3_5_0_bq3));
+  wire [7:0] ud_3_5_0_best_mask = ud_3_5_0_best_right ? {1'b0, ud_3_4_0_best_mask} : {1'b1, ud_2_5_0_best_mask};
+  wire ud_3_5_1_aq0 = (ud_2_5_1_best_q0 && ud_3_5_ge_0);
+  wire ud_3_5_1_aq1 = ud_3_5_1_aq0 || (ud_2_5_1_best_q1 && ud_3_5_ge_1);
+  wire ud_3_5_1_aq2 = ud_3_5_1_aq1 || (1'b1 && ud_3_5_ge_2);
+  wire ud_3_5_ge_m1 = !ud_3_5_diff[9] || ((&ud_3_5_diff[8:3]) && ud_3_5_diff[2:0] >= 3'd7);
+  wire ud_3_5_1_bq0 = ud_3_4_1_best_q0 && !ud_3_5_ge_m1;
+  wire ud_3_5_1_bq1 = ud_3_4_1_best_q1 && !ud_3_5_ge_0;
+  wire ud_3_5_1_bq2 = ud_3_4_1_best_q2 && !ud_3_5_ge_1;
+  wire ud_3_5_1_bq3 = 1'b1 && !ud_3_5_ge_2;
+  wire ud_3_5_1_bestr_q0 = ud_3_5_1_aq0 || ud_3_5_1_bq0;
+  wire ud_3_5_1_bestr_q1 = ud_3_5_1_aq1 || ud_3_5_1_bq1;
+  wire ud_3_5_1_bestr_q2 = ud_3_5_1_aq2 || ud_3_5_1_bq2;
+  wire ud_3_5_1_bestr_q3 = ud_3_5_1_aq2 || ud_3_5_1_bq3;
+  wire ud_3_5_1_bestr_right = (ud_3_5_1_bq0 && !ud_3_5_1_aq0) | (ud_3_5_1_bq1 && !ud_3_5_1_aq1) | (ud_3_5_1_bq2 && !ud_3_5_1_aq2) | (ud_3_5_1_bq3 && !ud_3_5_1_aq2);
+  wire [7:0] ud_3_5_1_bestr_mask = ud_3_5_1_bestr_right ? {1'b0, ud_3_4_1_best_mask} : {1'b1, ud_2_5_1_best_mask};
+  wire ud_3_5_1_best_q0 = 1'b0 || ud_3_5_1_bestr_q0;
+  wire ud_3_5_1_best_q1 = ud_3_5_0_best_q1 || ud_3_5_1_bestr_q1;
+  wire ud_3_5_1_best_q2 = ud_3_5_0_best_q2 || ud_3_5_1_bestr_q2;
+  wire ud_3_5_1_best_right = !((1'b0 && !ud_3_5_1_bestr_q0) | (ud_3_5_0_best_q1 && !ud_3_5_1_bestr_q1) | (ud_3_5_0_best_q2 && !ud_3_5_1_bestr_q2) | (1'b1 && !ud_3_5_1_bestr_q3));
+  wire [7:0] ud_3_5_1_best_mask = ud_3_5_1_best_right ? ud_3_5_1_bestr_mask : ud_3_5_0_best_mask;
+  wire ud_3_5_2_aq0 = (ud_2_5_2_best_q0 && ud_3_5_ge_m1);
+  wire ud_3_5_2_aq1 = ud_3_5_2_aq0 || (ud_2_5_2_best_q1 && ud_3_5_ge_0);
+  wire ud_3_5_2_aq2 = ud_3_5_2_aq1 || (1'b1 && ud_3_5_ge_1);
+  wire ud_3_5_ge_m2 = !ud_3_5_diff[9] || ((&ud_3_5_diff[8:3]) && ud_3_5_diff[2:0] >= 3'd6);
+  wire ud_3_5_2_bq0 = ud_3_4_2_best_q0 && !ud_3_5_ge_m2;
+  wire ud_3_5_2_bq1 = ud_3_4_2_best_q1 && !ud_3_5_ge_m1;
+  wire ud_3_5_2_bq2 = ud_3_4_2_best_q2 && !ud_3_5_ge_0;
+  wire ud_3_5_2_bq3 = 1'b1 && !ud_3_5_ge_1;
+  wire ud_3_5_2_bestr_q0 = ud_3_5_2_aq0 || ud_3_5_2_bq0;
+  wire ud_3_5_2_bestr_q1 = ud_3_5_2_aq1 || ud_3_5_2_bq1;
+  wire ud_3_5_2_bestr_q2 = ud_3_5_2_aq2 || ud_3_5_2_bq2;
+  wire ud_3_5_2_bestr_q3 = ud_3_5_2_aq2 || ud_3_5_2_bq3;
+  wire ud_3_5_2_bestr_right = (ud_3_5_2_bq0 && !ud_3_5_2_aq0) | (ud_3_5_2_bq1 && !ud_3_5_2_aq1) | (ud_3_5_2_bq2 && !ud_3_5_2_aq2) | (ud_3_5_2_bq3 && !ud_3_5_2_aq2);
+  wire [7:0] ud_3_5_2_bestr_mask = ud_3_5_2_bestr_right ? {1'b0, ud_3_4_2_best_mask} : {1'b1, ud_2_5_2_best_mask};
+  wire ud_3_5_2_best_q0 = ud_3_5_1_best_q0 || ud_3_5_2_bestr_q0;
+  wire ud_3_5_2_best_q1 = ud_3_5_1_best_q1 || ud_3_5_2_bestr_q1;
+  wire ud_3_5_2_best_q2 = ud_3_5_1_best_q2 || ud_3_5_2_bestr_q2;
+  wire ud_3_5_2_best_right = !((ud_3_5_1_best_q0 && !ud_3_5_2_bestr_q0) | (ud_3_5_1_best_q1 && !ud_3_5_2_bestr_q1) | (ud_3_5_1_best_q2 && !ud_3_5_2_bestr_q2) | (1'b1 && !ud_3_5_2_bestr_q3));
+  wire [7:0] ud_3_5_2_best_mask = ud_3_5_2_best_right ? ud_3_5_2_bestr_mask : ud_3_5_1_best_mask;
+  wire ud_3_5_3_aq0 = (ud_2_5_3_best_q0 && ud_3_5_ge_m2);
+  wire ud_3_5_3_aq1 = ud_3_5_3_aq0 || (ud_2_5_3_best_q1 && ud_3_5_ge_m1);
+  wire ud_3_5_3_aq2 = ud_3_5_3_aq1 || (1'b1 && ud_3_5_ge_0);
+  wire ud_3_5_ge_m3 = !ud_3_5_diff[9] || ((&ud_3_5_diff[8:3]) && ud_3_5_diff[2:0] >= 3'd5);
+  wire ud_3_5_3_bq0 = ud_3_4_3_best_q0 && !ud_3_5_ge_m3;
+  wire ud_3_5_3_bq1 = ud_3_4_3_best_q1 && !ud_3_5_ge_m2;
+  wire ud_3_5_3_bq2 = ud_3_4_3_best_q2 && !ud_3_5_ge_m1;
+  wire ud_3_5_3_bq3 = 1'b1 && !ud_3_5_ge_0;
+  wire ud_3_5_3_bestr_q0 = ud_3_5_3_aq0 || ud_3_5_3_bq0;
+  wire ud_3_5_3_bestr_q1 = ud_3_5_3_aq1 || ud_3_5_3_bq1;
+  wire ud_3_5_3_bestr_q2 = ud_3_5_3_aq2 || ud_3_5_3_bq2;
+  wire ud_3_5_3_bestr_q3 = ud_3_5_3_aq2 || ud_3_5_3_bq3;
+  wire ud_3_5_3_bestr_right = (ud_3_5_3_bq0 && !ud_3_5_3_aq0) | (ud_3_5_3_bq1 && !ud_3_5_3_aq1) | (ud_3_5_3_bq2 && !ud_3_5_3_aq2) | (ud_3_5_3_bq3 && !ud_3_5_3_aq2);
+  wire [7:0] ud_3_5_3_bestr_mask = ud_3_5_3_bestr_right ? {1'b0, ud_3_4_3_best_mask} : {1'b1, ud_2_5_3_best_mask};
+  wire ud_3_5_3_best_q0 = ud_3_5_2_best_q0 || ud_3_5_3_bestr_q0;
+  wire ud_3_5_3_best_q1 = ud_3_5_2_best_q1 || ud_3_5_3_bestr_q1;
+  wire ud_3_5_3_best_q2 = ud_3_5_2_best_q2 || ud_3_5_3_bestr_q2;
+  wire ud_3_5_3_best_right = !((ud_3_5_2_best_q0 && !ud_3_5_3_bestr_q0) | (ud_3_5_2_best_q1 && !ud_3_5_3_bestr_q1) | (ud_3_5_2_best_q2 && !ud_3_5_3_bestr_q2) | (1'b1 && !ud_3_5_3_bestr_q3));
+  wire [7:0] ud_3_5_3_best_mask = ud_3_5_3_best_right ? ud_3_5_3_bestr_mask : ud_3_5_2_best_mask;
+  wire ud_3_5_4_aq0 = (ud_2_5_4_best_q0 && ud_3_5_ge_m3);
+  wire ud_3_5_4_aq1 = ud_3_5_4_aq0 || (ud_2_5_4_best_q1 && ud_3_5_ge_m2);
+  wire ud_3_5_4_aq2 = ud_3_5_4_aq1 || (1'b1 && ud_3_5_ge_m1);
+  wire ud_3_5_ge_m4 = !ud_3_5_diff[9] || ((&ud_3_5_diff[8:3]) && ud_3_5_diff[2:0] >= 3'd4);
+  wire ud_3_5_4_bq0 = 1'b1 && !ud_3_5_ge_m4;
+  wire ud_3_5_4_bq1 = 1'b1 && !ud_3_5_ge_m3;
+  wire ud_3_5_4_bq2 = 1'b1 && !ud_3_5_ge_m2;
+  wire ud_3_5_4_bq3 = 1'b1 && !ud_3_5_ge_m1;
+  wire ud_3_5_4_bestr_q0 = ud_3_5_4_aq0 || ud_3_5_4_bq0;
+  wire ud_3_5_4_bestr_q1 = ud_3_5_4_aq1 || ud_3_5_4_bq1;
+  wire ud_3_5_4_bestr_q2 = ud_3_5_4_aq2 || ud_3_5_4_bq2;
+  wire ud_3_5_4_bestr_q3 = ud_3_5_4_aq2 || ud_3_5_4_bq3;
+  wire ud_3_5_4_bestr_right = (ud_3_5_4_bq0 && !ud_3_5_4_aq0) | (ud_3_5_4_bq1 && !ud_3_5_4_aq1) | (ud_3_5_4_bq2 && !ud_3_5_4_aq2) | (ud_3_5_4_bq3 && !ud_3_5_4_aq2);
+  wire [7:0] ud_3_5_4_bestr_mask = ud_3_5_4_bestr_right ? {1'b0, ud_3_4_4_best_mask} : {1'b1, ud_2_5_4_best_mask};
+  wire ud_3_5_4_best_q0 = ud_3_5_3_best_q0 || ud_3_5_4_bestr_q0;
+  wire ud_3_5_4_best_q1 = ud_3_5_3_best_q1 || ud_3_5_4_bestr_q1;
+  wire ud_3_5_4_best_q2 = ud_3_5_3_best_q2 || ud_3_5_4_bestr_q2;
+  wire ud_3_5_4_best_right = !((ud_3_5_3_best_q0 && !ud_3_5_4_bestr_q0) | (ud_3_5_3_best_q1 && !ud_3_5_4_bestr_q1) | (ud_3_5_3_best_q2 && !ud_3_5_4_bestr_q2) | (1'b1 && !ud_3_5_4_bestr_q3));
+  wire [7:0] ud_3_5_4_best_mask = ud_3_5_4_best_right ? ud_3_5_4_bestr_mask : ud_3_5_3_best_mask;
+  wire ud_3_5_5_aq0 = (1'b1 && ud_3_5_ge_m4);
+  wire ud_3_5_5_aq1 = ud_3_5_5_aq0 || (1'b1 && ud_3_5_ge_m3);
+  wire ud_3_5_5_aq2 = ud_3_5_5_aq1 || (1'b1 && ud_3_5_ge_m2);
+  wire ud_3_5_5_best_right = !((ud_3_5_4_best_q0 && !ud_3_5_5_aq0) | (ud_3_5_4_best_q1 && !ud_3_5_5_aq1) | (ud_3_5_4_best_q2 && !ud_3_5_5_aq2) | (1'b1 && !ud_3_5_5_aq2));
+  wire [7:0] ud_3_5_5_best_mask = ud_3_5_5_best_right ? {1'b1, ud_2_5_5_best_mask} : ud_3_5_4_best_mask;
+//
+// DP PREFIX (4,1): share one signed prefix difference across
+// all A-waiting budgets d=0..1; each retained mask has 5 issue bits.
+//
+  wire [8:0] ud_4_1_diff_cla_p = ud_pa_3 ^ ~ud_pb_0;
+  wire [8:0] ud_4_1_diff_cla_g = ud_pa_3 & ~ud_pb_0;
+  wire ud_4_1_diff_cla_c0 = 1'b1;
+  wire ud_4_1_diff_cla_c1 = (ud_4_1_diff_cla_g[0]) || (ud_4_1_diff_cla_c0 && ud_4_1_diff_cla_p[0]);
+  wire ud_4_1_diff_cla_c2 = (ud_4_1_diff_cla_g[0] && ud_4_1_diff_cla_p[1]) || (ud_4_1_diff_cla_g[1]) || (ud_4_1_diff_cla_c0 && ud_4_1_diff_cla_p[0] && ud_4_1_diff_cla_p[1]);
+  wire ud_4_1_diff_cla_c3 = (ud_4_1_diff_cla_g[0] && ud_4_1_diff_cla_p[1] && ud_4_1_diff_cla_p[2]) || (ud_4_1_diff_cla_g[1] && ud_4_1_diff_cla_p[2]) || (ud_4_1_diff_cla_g[2]) || (ud_4_1_diff_cla_c0 && ud_4_1_diff_cla_p[0] && ud_4_1_diff_cla_p[1] && ud_4_1_diff_cla_p[2]);
+  wire ud_4_1_diff_cla_c4 = (ud_4_1_diff_cla_g[3]) || (ud_4_1_diff_cla_c3 && ud_4_1_diff_cla_p[3]);
+  wire ud_4_1_diff_cla_c5 = (ud_4_1_diff_cla_g[3] && ud_4_1_diff_cla_p[4]) || (ud_4_1_diff_cla_g[4]) || (ud_4_1_diff_cla_c3 && ud_4_1_diff_cla_p[3] && ud_4_1_diff_cla_p[4]);
+  wire ud_4_1_diff_cla_c6 = (ud_4_1_diff_cla_g[3] && ud_4_1_diff_cla_p[4] && ud_4_1_diff_cla_p[5]) || (ud_4_1_diff_cla_g[4] && ud_4_1_diff_cla_p[5]) || (ud_4_1_diff_cla_g[5]) || (ud_4_1_diff_cla_c3 && ud_4_1_diff_cla_p[3] && ud_4_1_diff_cla_p[4] && ud_4_1_diff_cla_p[5]);
+  wire ud_4_1_diff_cla_c7 = (ud_4_1_diff_cla_g[6]) || (ud_4_1_diff_cla_c6 && ud_4_1_diff_cla_p[6]);
+  wire ud_4_1_diff_cla_c8 = (ud_4_1_diff_cla_g[6] && ud_4_1_diff_cla_p[7]) || (ud_4_1_diff_cla_g[7]) || (ud_4_1_diff_cla_c6 && ud_4_1_diff_cla_p[6] && ud_4_1_diff_cla_p[7]);
+  wire ud_4_1_diff_cla_c9 = (ud_4_1_diff_cla_g[6] && ud_4_1_diff_cla_p[7] && ud_4_1_diff_cla_p[8]) || (ud_4_1_diff_cla_g[7] && ud_4_1_diff_cla_p[8]) || (ud_4_1_diff_cla_g[8]) || (ud_4_1_diff_cla_c6 && ud_4_1_diff_cla_p[6] && ud_4_1_diff_cla_p[7] && ud_4_1_diff_cla_p[8]);
+  wire [9:0] ud_4_1_diff = {!ud_4_1_diff_cla_c9, (ud_4_1_diff_cla_p ^ {ud_4_1_diff_cla_c8, ud_4_1_diff_cla_c7, ud_4_1_diff_cla_c6, ud_4_1_diff_cla_c5, ud_4_1_diff_cla_c4, ud_4_1_diff_cla_c3, ud_4_1_diff_cla_c2, ud_4_1_diff_cla_c1, ud_4_1_diff_cla_c0})};
+  wire ud_4_1_ge_1 = !ud_4_1_diff[9] && ((|ud_4_1_diff[8:3]) || ud_4_1_diff[2:0] >= 3'd1);
+  wire ud_4_1_0_aq0 = (1'b0 && ud_4_1_ge_1);
+  wire ud_4_1_ge_2 = !ud_4_1_diff[9] && ((|ud_4_1_diff[8:3]) || ud_4_1_diff[2:0] >= 3'd2);
+  wire ud_4_1_0_aq1 = ud_4_1_0_aq0 || (ud_3_1_0_best_q1 && ud_4_1_ge_2);
+  wire ud_4_1_ge_3 = !ud_4_1_diff[9] && ((|ud_4_1_diff[8:3]) || ud_4_1_diff[2:0] >= 3'd3);
+  wire ud_4_1_0_aq2 = ud_4_1_0_aq1 || (ud_3_1_0_best_q2 && ud_4_1_ge_3);
+  wire ud_4_1_ge_4 = !ud_4_1_diff[9] && ((|ud_4_1_diff[8:3]) || ud_4_1_diff[2:0] >= 3'd4);
+  wire ud_4_1_0_aq3 = ud_4_1_0_aq2 || (1'b1 && ud_4_1_ge_4);
+  wire ud_4_1_ge_0 = !ud_4_1_diff[9];
+  wire ud_4_1_0_bq0 = 1'b1 && !ud_4_1_ge_0;
+  wire ud_4_1_0_bq1 = 1'b1 && !ud_4_1_ge_1;
+  wire ud_4_1_0_bq2 = 1'b1 && !ud_4_1_ge_2;
+  wire ud_4_1_0_bq3 = 1'b1 && !ud_4_1_ge_3;
+  wire ud_4_1_0_bq4 = 1'b1 && !ud_4_1_ge_4;
+  wire ud_4_1_0_best_q1 = ud_4_1_0_aq1 || ud_4_1_0_bq1;
+  wire ud_4_1_0_best_q2 = ud_4_1_0_aq2 || ud_4_1_0_bq2;
+  wire ud_4_1_0_best_q3 = ud_4_1_0_aq3 || ud_4_1_0_bq3;
+  wire ud_4_1_0_best_right = !((ud_4_1_0_aq0 && !ud_4_1_0_bq0) | (ud_4_1_0_aq1 && !ud_4_1_0_bq1) | (ud_4_1_0_aq2 && !ud_4_1_0_bq2) | (ud_4_1_0_aq3 && !ud_4_1_0_bq3) | (ud_4_1_0_aq3 && !ud_4_1_0_bq4));
+  wire [4:0] ud_4_1_0_best_mask = ud_4_1_0_best_right ? {1'b0, 4'd15} : {1'b1, ud_3_1_0_best_mask};
+  wire ud_4_1_1_aq0 = (1'b1 && ud_4_1_ge_0);
+  wire ud_4_1_1_aq1 = ud_4_1_1_aq0 || (1'b1 && ud_4_1_ge_1);
+  wire ud_4_1_1_aq2 = ud_4_1_1_aq1 || (1'b1 && ud_4_1_ge_2);
+  wire ud_4_1_1_aq3 = ud_4_1_1_aq2 || (1'b1 && ud_4_1_ge_3);
+  wire ud_4_1_1_best_right = !((1'b0 && !ud_4_1_1_aq0) | (ud_4_1_0_best_q1 && !ud_4_1_1_aq1) | (ud_4_1_0_best_q2 && !ud_4_1_1_aq2) | (ud_4_1_0_best_q3 && !ud_4_1_1_aq3) | (1'b1 && !ud_4_1_1_aq3));
+  wire [4:0] ud_4_1_1_best_mask = ud_4_1_1_best_right ? {1'b1, ud_3_1_1_best_mask} : ud_4_1_0_best_mask;
+//
+// DP PREFIX (4,2): share one signed prefix difference across
+// all A-waiting budgets d=0..2; each retained mask has 6 issue bits.
+//
+  wire [8:0] ud_4_2_diff_cla_p = ud_pa_3 ^ ~ud_pb_1;
+  wire [8:0] ud_4_2_diff_cla_g = ud_pa_3 & ~ud_pb_1;
+  wire ud_4_2_diff_cla_c0 = 1'b1;
+  wire ud_4_2_diff_cla_c1 = (ud_4_2_diff_cla_g[0]) || (ud_4_2_diff_cla_c0 && ud_4_2_diff_cla_p[0]);
+  wire ud_4_2_diff_cla_c2 = (ud_4_2_diff_cla_g[0] && ud_4_2_diff_cla_p[1]) || (ud_4_2_diff_cla_g[1]) || (ud_4_2_diff_cla_c0 && ud_4_2_diff_cla_p[0] && ud_4_2_diff_cla_p[1]);
+  wire ud_4_2_diff_cla_c3 = (ud_4_2_diff_cla_g[0] && ud_4_2_diff_cla_p[1] && ud_4_2_diff_cla_p[2]) || (ud_4_2_diff_cla_g[1] && ud_4_2_diff_cla_p[2]) || (ud_4_2_diff_cla_g[2]) || (ud_4_2_diff_cla_c0 && ud_4_2_diff_cla_p[0] && ud_4_2_diff_cla_p[1] && ud_4_2_diff_cla_p[2]);
+  wire ud_4_2_diff_cla_c4 = (ud_4_2_diff_cla_g[3]) || (ud_4_2_diff_cla_c3 && ud_4_2_diff_cla_p[3]);
+  wire ud_4_2_diff_cla_c5 = (ud_4_2_diff_cla_g[3] && ud_4_2_diff_cla_p[4]) || (ud_4_2_diff_cla_g[4]) || (ud_4_2_diff_cla_c3 && ud_4_2_diff_cla_p[3] && ud_4_2_diff_cla_p[4]);
+  wire ud_4_2_diff_cla_c6 = (ud_4_2_diff_cla_g[3] && ud_4_2_diff_cla_p[4] && ud_4_2_diff_cla_p[5]) || (ud_4_2_diff_cla_g[4] && ud_4_2_diff_cla_p[5]) || (ud_4_2_diff_cla_g[5]) || (ud_4_2_diff_cla_c3 && ud_4_2_diff_cla_p[3] && ud_4_2_diff_cla_p[4] && ud_4_2_diff_cla_p[5]);
+  wire ud_4_2_diff_cla_c7 = (ud_4_2_diff_cla_g[6]) || (ud_4_2_diff_cla_c6 && ud_4_2_diff_cla_p[6]);
+  wire ud_4_2_diff_cla_c8 = (ud_4_2_diff_cla_g[6] && ud_4_2_diff_cla_p[7]) || (ud_4_2_diff_cla_g[7]) || (ud_4_2_diff_cla_c6 && ud_4_2_diff_cla_p[6] && ud_4_2_diff_cla_p[7]);
+  wire ud_4_2_diff_cla_c9 = (ud_4_2_diff_cla_g[6] && ud_4_2_diff_cla_p[7] && ud_4_2_diff_cla_p[8]) || (ud_4_2_diff_cla_g[7] && ud_4_2_diff_cla_p[8]) || (ud_4_2_diff_cla_g[8]) || (ud_4_2_diff_cla_c6 && ud_4_2_diff_cla_p[6] && ud_4_2_diff_cla_p[7] && ud_4_2_diff_cla_p[8]);
+  wire [9:0] ud_4_2_diff = {!ud_4_2_diff_cla_c9, (ud_4_2_diff_cla_p ^ {ud_4_2_diff_cla_c8, ud_4_2_diff_cla_c7, ud_4_2_diff_cla_c6, ud_4_2_diff_cla_c5, ud_4_2_diff_cla_c4, ud_4_2_diff_cla_c3, ud_4_2_diff_cla_c2, ud_4_2_diff_cla_c1, ud_4_2_diff_cla_c0})};
+  wire ud_4_2_ge_1 = !ud_4_2_diff[9] && ((|ud_4_2_diff[8:3]) || ud_4_2_diff[2:0] >= 3'd1);
+  wire ud_4_2_0_aq0 = (1'b0 && ud_4_2_ge_1);
+  wire ud_4_2_ge_2 = !ud_4_2_diff[9] && ((|ud_4_2_diff[8:3]) || ud_4_2_diff[2:0] >= 3'd2);
+  wire ud_4_2_0_aq1 = ud_4_2_0_aq0 || (ud_3_2_0_best_q1 && ud_4_2_ge_2);
+  wire ud_4_2_ge_3 = !ud_4_2_diff[9] && ((|ud_4_2_diff[8:3]) || ud_4_2_diff[2:0] >= 3'd3);
+  wire ud_4_2_0_aq2 = ud_4_2_0_aq1 || (ud_3_2_0_best_q2 && ud_4_2_ge_3);
+  wire ud_4_2_ge_4 = !ud_4_2_diff[9] && ((|ud_4_2_diff[8:3]) || ud_4_2_diff[2:0] >= 3'd4);
+  wire ud_4_2_0_aq3 = ud_4_2_0_aq2 || (1'b1 && ud_4_2_ge_4);
+  wire ud_4_2_ge_0 = !ud_4_2_diff[9];
+  wire ud_4_2_0_bq0 = 1'b0 && !ud_4_2_ge_0;
+  wire ud_4_2_0_bq1 = ud_4_1_0_best_q1 && !ud_4_2_ge_1;
+  wire ud_4_2_0_bq2 = ud_4_1_0_best_q2 && !ud_4_2_ge_2;
+  wire ud_4_2_0_bq3 = ud_4_1_0_best_q3 && !ud_4_2_ge_3;
+  wire ud_4_2_0_bq4 = 1'b1 && !ud_4_2_ge_4;
+  wire ud_4_2_0_best_q1 = ud_4_2_0_aq1 || ud_4_2_0_bq1;
+  wire ud_4_2_0_best_q2 = ud_4_2_0_aq2 || ud_4_2_0_bq2;
+  wire ud_4_2_0_best_q3 = ud_4_2_0_aq3 || ud_4_2_0_bq3;
+  wire ud_4_2_0_best_right = !((ud_4_2_0_aq0 && !ud_4_2_0_bq0) | (ud_4_2_0_aq1 && !ud_4_2_0_bq1) | (ud_4_2_0_aq2 && !ud_4_2_0_bq2) | (ud_4_2_0_aq3 && !ud_4_2_0_bq3) | (ud_4_2_0_aq3 && !ud_4_2_0_bq4));
+  wire [5:0] ud_4_2_0_best_mask = ud_4_2_0_best_right ? {1'b0, ud_4_1_0_best_mask} : {1'b1, ud_3_2_0_best_mask};
+  wire ud_4_2_1_aq0 = (ud_3_2_1_best_q0 && ud_4_2_ge_0);
+  wire ud_4_2_1_aq1 = ud_4_2_1_aq0 || (ud_3_2_1_best_q1 && ud_4_2_ge_1);
+  wire ud_4_2_1_aq2 = ud_4_2_1_aq1 || (ud_3_2_1_best_q2 && ud_4_2_ge_2);
+  wire ud_4_2_1_aq3 = ud_4_2_1_aq2 || (1'b1 && ud_4_2_ge_3);
+  wire ud_4_2_ge_m1 = !ud_4_2_diff[9] || ((&ud_4_2_diff[8:3]) && ud_4_2_diff[2:0] >= 3'd7);
+  wire ud_4_2_1_bq0 = 1'b1 && !ud_4_2_ge_m1;
+  wire ud_4_2_1_bq1 = 1'b1 && !ud_4_2_ge_0;
+  wire ud_4_2_1_bq2 = 1'b1 && !ud_4_2_ge_1;
+  wire ud_4_2_1_bq3 = 1'b1 && !ud_4_2_ge_2;
+  wire ud_4_2_1_bq4 = 1'b1 && !ud_4_2_ge_3;
+  wire ud_4_2_1_bestr_q0 = ud_4_2_1_aq0 || ud_4_2_1_bq0;
+  wire ud_4_2_1_bestr_q1 = ud_4_2_1_aq1 || ud_4_2_1_bq1;
+  wire ud_4_2_1_bestr_q2 = ud_4_2_1_aq2 || ud_4_2_1_bq2;
+  wire ud_4_2_1_bestr_q3 = ud_4_2_1_aq3 || ud_4_2_1_bq3;
+  wire ud_4_2_1_bestr_q4 = ud_4_2_1_aq3 || ud_4_2_1_bq4;
+  wire ud_4_2_1_bestr_right = (ud_4_2_1_bq0 && !ud_4_2_1_aq0) | (ud_4_2_1_bq1 && !ud_4_2_1_aq1) | (ud_4_2_1_bq2 && !ud_4_2_1_aq2) | (ud_4_2_1_bq3 && !ud_4_2_1_aq3) | (ud_4_2_1_bq4 && !ud_4_2_1_aq3);
+  wire [5:0] ud_4_2_1_bestr_mask = ud_4_2_1_bestr_right ? {1'b0, ud_4_1_1_best_mask} : {1'b1, ud_3_2_1_best_mask};
+  wire ud_4_2_1_best_q0 = 1'b0 || ud_4_2_1_bestr_q0;
+  wire ud_4_2_1_best_q1 = ud_4_2_0_best_q1 || ud_4_2_1_bestr_q1;
+  wire ud_4_2_1_best_q2 = ud_4_2_0_best_q2 || ud_4_2_1_bestr_q2;
+  wire ud_4_2_1_best_q3 = ud_4_2_0_best_q3 || ud_4_2_1_bestr_q3;
+  wire ud_4_2_1_best_right = !((1'b0 && !ud_4_2_1_bestr_q0) | (ud_4_2_0_best_q1 && !ud_4_2_1_bestr_q1) | (ud_4_2_0_best_q2 && !ud_4_2_1_bestr_q2) | (ud_4_2_0_best_q3 && !ud_4_2_1_bestr_q3) | (1'b1 && !ud_4_2_1_bestr_q4));
+  wire [5:0] ud_4_2_1_best_mask = ud_4_2_1_best_right ? ud_4_2_1_bestr_mask : ud_4_2_0_best_mask;
+  wire ud_4_2_2_aq0 = (1'b1 && ud_4_2_ge_m1);
+  wire ud_4_2_2_aq1 = ud_4_2_2_aq0 || (1'b1 && ud_4_2_ge_0);
+  wire ud_4_2_2_aq2 = ud_4_2_2_aq1 || (1'b1 && ud_4_2_ge_1);
+  wire ud_4_2_2_aq3 = ud_4_2_2_aq2 || (1'b1 && ud_4_2_ge_2);
+  wire ud_4_2_2_best_right = !((ud_4_2_1_best_q0 && !ud_4_2_2_aq0) | (ud_4_2_1_best_q1 && !ud_4_2_2_aq1) | (ud_4_2_1_best_q2 && !ud_4_2_2_aq2) | (ud_4_2_1_best_q3 && !ud_4_2_2_aq3) | (1'b1 && !ud_4_2_2_aq3));
+  wire [5:0] ud_4_2_2_best_mask = ud_4_2_2_best_right ? {1'b1, ud_3_2_2_best_mask} : ud_4_2_1_best_mask;
+//
+// DP PREFIX (4,3): share one signed prefix difference across
+// all A-waiting budgets d=0..3; each retained mask has 7 issue bits.
+//
+  wire [8:0] ud_4_3_diff_cla_p = ud_pa_3 ^ ~ud_pb_2;
+  wire [8:0] ud_4_3_diff_cla_g = ud_pa_3 & ~ud_pb_2;
+  wire ud_4_3_diff_cla_c0 = 1'b1;
+  wire ud_4_3_diff_cla_c1 = (ud_4_3_diff_cla_g[0]) || (ud_4_3_diff_cla_c0 && ud_4_3_diff_cla_p[0]);
+  wire ud_4_3_diff_cla_c2 = (ud_4_3_diff_cla_g[0] && ud_4_3_diff_cla_p[1]) || (ud_4_3_diff_cla_g[1]) || (ud_4_3_diff_cla_c0 && ud_4_3_diff_cla_p[0] && ud_4_3_diff_cla_p[1]);
+  wire ud_4_3_diff_cla_c3 = (ud_4_3_diff_cla_g[0] && ud_4_3_diff_cla_p[1] && ud_4_3_diff_cla_p[2]) || (ud_4_3_diff_cla_g[1] && ud_4_3_diff_cla_p[2]) || (ud_4_3_diff_cla_g[2]) || (ud_4_3_diff_cla_c0 && ud_4_3_diff_cla_p[0] && ud_4_3_diff_cla_p[1] && ud_4_3_diff_cla_p[2]);
+  wire ud_4_3_diff_cla_c4 = (ud_4_3_diff_cla_g[3]) || (ud_4_3_diff_cla_c3 && ud_4_3_diff_cla_p[3]);
+  wire ud_4_3_diff_cla_c5 = (ud_4_3_diff_cla_g[3] && ud_4_3_diff_cla_p[4]) || (ud_4_3_diff_cla_g[4]) || (ud_4_3_diff_cla_c3 && ud_4_3_diff_cla_p[3] && ud_4_3_diff_cla_p[4]);
+  wire ud_4_3_diff_cla_c6 = (ud_4_3_diff_cla_g[3] && ud_4_3_diff_cla_p[4] && ud_4_3_diff_cla_p[5]) || (ud_4_3_diff_cla_g[4] && ud_4_3_diff_cla_p[5]) || (ud_4_3_diff_cla_g[5]) || (ud_4_3_diff_cla_c3 && ud_4_3_diff_cla_p[3] && ud_4_3_diff_cla_p[4] && ud_4_3_diff_cla_p[5]);
+  wire ud_4_3_diff_cla_c7 = (ud_4_3_diff_cla_g[6]) || (ud_4_3_diff_cla_c6 && ud_4_3_diff_cla_p[6]);
+  wire ud_4_3_diff_cla_c8 = (ud_4_3_diff_cla_g[6] && ud_4_3_diff_cla_p[7]) || (ud_4_3_diff_cla_g[7]) || (ud_4_3_diff_cla_c6 && ud_4_3_diff_cla_p[6] && ud_4_3_diff_cla_p[7]);
+  wire ud_4_3_diff_cla_c9 = (ud_4_3_diff_cla_g[6] && ud_4_3_diff_cla_p[7] && ud_4_3_diff_cla_p[8]) || (ud_4_3_diff_cla_g[7] && ud_4_3_diff_cla_p[8]) || (ud_4_3_diff_cla_g[8]) || (ud_4_3_diff_cla_c6 && ud_4_3_diff_cla_p[6] && ud_4_3_diff_cla_p[7] && ud_4_3_diff_cla_p[8]);
+  wire [9:0] ud_4_3_diff = {!ud_4_3_diff_cla_c9, (ud_4_3_diff_cla_p ^ {ud_4_3_diff_cla_c8, ud_4_3_diff_cla_c7, ud_4_3_diff_cla_c6, ud_4_3_diff_cla_c5, ud_4_3_diff_cla_c4, ud_4_3_diff_cla_c3, ud_4_3_diff_cla_c2, ud_4_3_diff_cla_c1, ud_4_3_diff_cla_c0})};
+  wire ud_4_3_ge_1 = !ud_4_3_diff[9] && ((|ud_4_3_diff[8:3]) || ud_4_3_diff[2:0] >= 3'd1);
+  wire ud_4_3_0_aq0 = (1'b0 && ud_4_3_ge_1);
+  wire ud_4_3_ge_2 = !ud_4_3_diff[9] && ((|ud_4_3_diff[8:3]) || ud_4_3_diff[2:0] >= 3'd2);
+  wire ud_4_3_0_aq1 = ud_4_3_0_aq0 || (ud_3_3_0_best_q1 && ud_4_3_ge_2);
+  wire ud_4_3_ge_3 = !ud_4_3_diff[9] && ((|ud_4_3_diff[8:3]) || ud_4_3_diff[2:0] >= 3'd3);
+  wire ud_4_3_0_aq2 = ud_4_3_0_aq1 || (ud_3_3_0_best_q2 && ud_4_3_ge_3);
+  wire ud_4_3_ge_4 = !ud_4_3_diff[9] && ((|ud_4_3_diff[8:3]) || ud_4_3_diff[2:0] >= 3'd4);
+  wire ud_4_3_0_aq3 = ud_4_3_0_aq2 || (1'b1 && ud_4_3_ge_4);
+  wire ud_4_3_ge_0 = !ud_4_3_diff[9];
+  wire ud_4_3_0_bq0 = 1'b0 && !ud_4_3_ge_0;
+  wire ud_4_3_0_bq1 = ud_4_2_0_best_q1 && !ud_4_3_ge_1;
+  wire ud_4_3_0_bq2 = ud_4_2_0_best_q2 && !ud_4_3_ge_2;
+  wire ud_4_3_0_bq3 = ud_4_2_0_best_q3 && !ud_4_3_ge_3;
+  wire ud_4_3_0_bq4 = 1'b1 && !ud_4_3_ge_4;
+  wire ud_4_3_0_best_q1 = ud_4_3_0_aq1 || ud_4_3_0_bq1;
+  wire ud_4_3_0_best_q2 = ud_4_3_0_aq2 || ud_4_3_0_bq2;
+  wire ud_4_3_0_best_q3 = ud_4_3_0_aq3 || ud_4_3_0_bq3;
+  wire ud_4_3_0_best_right = !((ud_4_3_0_aq0 && !ud_4_3_0_bq0) | (ud_4_3_0_aq1 && !ud_4_3_0_bq1) | (ud_4_3_0_aq2 && !ud_4_3_0_bq2) | (ud_4_3_0_aq3 && !ud_4_3_0_bq3) | (ud_4_3_0_aq3 && !ud_4_3_0_bq4));
+  wire [6:0] ud_4_3_0_best_mask = ud_4_3_0_best_right ? {1'b0, ud_4_2_0_best_mask} : {1'b1, ud_3_3_0_best_mask};
+  wire ud_4_3_1_aq0 = (ud_3_3_1_best_q0 && ud_4_3_ge_0);
+  wire ud_4_3_1_aq1 = ud_4_3_1_aq0 || (ud_3_3_1_best_q1 && ud_4_3_ge_1);
+  wire ud_4_3_1_aq2 = ud_4_3_1_aq1 || (ud_3_3_1_best_q2 && ud_4_3_ge_2);
+  wire ud_4_3_1_aq3 = ud_4_3_1_aq2 || (1'b1 && ud_4_3_ge_3);
+  wire ud_4_3_ge_m1 = !ud_4_3_diff[9] || ((&ud_4_3_diff[8:3]) && ud_4_3_diff[2:0] >= 3'd7);
+  wire ud_4_3_1_bq0 = ud_4_2_1_best_q0 && !ud_4_3_ge_m1;
+  wire ud_4_3_1_bq1 = ud_4_2_1_best_q1 && !ud_4_3_ge_0;
+  wire ud_4_3_1_bq2 = ud_4_2_1_best_q2 && !ud_4_3_ge_1;
+  wire ud_4_3_1_bq3 = ud_4_2_1_best_q3 && !ud_4_3_ge_2;
+  wire ud_4_3_1_bq4 = 1'b1 && !ud_4_3_ge_3;
+  wire ud_4_3_1_bestr_q0 = ud_4_3_1_aq0 || ud_4_3_1_bq0;
+  wire ud_4_3_1_bestr_q1 = ud_4_3_1_aq1 || ud_4_3_1_bq1;
+  wire ud_4_3_1_bestr_q2 = ud_4_3_1_aq2 || ud_4_3_1_bq2;
+  wire ud_4_3_1_bestr_q3 = ud_4_3_1_aq3 || ud_4_3_1_bq3;
+  wire ud_4_3_1_bestr_q4 = ud_4_3_1_aq3 || ud_4_3_1_bq4;
+  wire ud_4_3_1_bestr_right = (ud_4_3_1_bq0 && !ud_4_3_1_aq0) | (ud_4_3_1_bq1 && !ud_4_3_1_aq1) | (ud_4_3_1_bq2 && !ud_4_3_1_aq2) | (ud_4_3_1_bq3 && !ud_4_3_1_aq3) | (ud_4_3_1_bq4 && !ud_4_3_1_aq3);
+  wire [6:0] ud_4_3_1_bestr_mask = ud_4_3_1_bestr_right ? {1'b0, ud_4_2_1_best_mask} : {1'b1, ud_3_3_1_best_mask};
+  wire ud_4_3_1_best_q0 = 1'b0 || ud_4_3_1_bestr_q0;
+  wire ud_4_3_1_best_q1 = ud_4_3_0_best_q1 || ud_4_3_1_bestr_q1;
+  wire ud_4_3_1_best_q2 = ud_4_3_0_best_q2 || ud_4_3_1_bestr_q2;
+  wire ud_4_3_1_best_q3 = ud_4_3_0_best_q3 || ud_4_3_1_bestr_q3;
+  wire ud_4_3_1_best_right = !((1'b0 && !ud_4_3_1_bestr_q0) | (ud_4_3_0_best_q1 && !ud_4_3_1_bestr_q1) | (ud_4_3_0_best_q2 && !ud_4_3_1_bestr_q2) | (ud_4_3_0_best_q3 && !ud_4_3_1_bestr_q3) | (1'b1 && !ud_4_3_1_bestr_q4));
+  wire [6:0] ud_4_3_1_best_mask = ud_4_3_1_best_right ? ud_4_3_1_bestr_mask : ud_4_3_0_best_mask;
+  wire ud_4_3_2_aq0 = (ud_3_3_2_best_q0 && ud_4_3_ge_m1);
+  wire ud_4_3_2_aq1 = ud_4_3_2_aq0 || (ud_3_3_2_best_q1 && ud_4_3_ge_0);
+  wire ud_4_3_2_aq2 = ud_4_3_2_aq1 || (ud_3_3_2_best_q2 && ud_4_3_ge_1);
+  wire ud_4_3_2_aq3 = ud_4_3_2_aq2 || (1'b1 && ud_4_3_ge_2);
+  wire ud_4_3_ge_m2 = !ud_4_3_diff[9] || ((&ud_4_3_diff[8:3]) && ud_4_3_diff[2:0] >= 3'd6);
+  wire ud_4_3_2_bq0 = 1'b1 && !ud_4_3_ge_m2;
+  wire ud_4_3_2_bq1 = 1'b1 && !ud_4_3_ge_m1;
+  wire ud_4_3_2_bq2 = 1'b1 && !ud_4_3_ge_0;
+  wire ud_4_3_2_bq3 = 1'b1 && !ud_4_3_ge_1;
+  wire ud_4_3_2_bq4 = 1'b1 && !ud_4_3_ge_2;
+  wire ud_4_3_2_bestr_q0 = ud_4_3_2_aq0 || ud_4_3_2_bq0;
+  wire ud_4_3_2_bestr_q1 = ud_4_3_2_aq1 || ud_4_3_2_bq1;
+  wire ud_4_3_2_bestr_q2 = ud_4_3_2_aq2 || ud_4_3_2_bq2;
+  wire ud_4_3_2_bestr_q3 = ud_4_3_2_aq3 || ud_4_3_2_bq3;
+  wire ud_4_3_2_bestr_q4 = ud_4_3_2_aq3 || ud_4_3_2_bq4;
+  wire ud_4_3_2_bestr_right = (ud_4_3_2_bq0 && !ud_4_3_2_aq0) | (ud_4_3_2_bq1 && !ud_4_3_2_aq1) | (ud_4_3_2_bq2 && !ud_4_3_2_aq2) | (ud_4_3_2_bq3 && !ud_4_3_2_aq3) | (ud_4_3_2_bq4 && !ud_4_3_2_aq3);
+  wire [6:0] ud_4_3_2_bestr_mask = ud_4_3_2_bestr_right ? {1'b0, ud_4_2_2_best_mask} : {1'b1, ud_3_3_2_best_mask};
+  wire ud_4_3_2_best_q0 = ud_4_3_1_best_q0 || ud_4_3_2_bestr_q0;
+  wire ud_4_3_2_best_q1 = ud_4_3_1_best_q1 || ud_4_3_2_bestr_q1;
+  wire ud_4_3_2_best_q2 = ud_4_3_1_best_q2 || ud_4_3_2_bestr_q2;
+  wire ud_4_3_2_best_q3 = ud_4_3_1_best_q3 || ud_4_3_2_bestr_q3;
+  wire ud_4_3_2_best_right = !((ud_4_3_1_best_q0 && !ud_4_3_2_bestr_q0) | (ud_4_3_1_best_q1 && !ud_4_3_2_bestr_q1) | (ud_4_3_1_best_q2 && !ud_4_3_2_bestr_q2) | (ud_4_3_1_best_q3 && !ud_4_3_2_bestr_q3) | (1'b1 && !ud_4_3_2_bestr_q4));
+  wire [6:0] ud_4_3_2_best_mask = ud_4_3_2_best_right ? ud_4_3_2_bestr_mask : ud_4_3_1_best_mask;
+  wire ud_4_3_3_aq0 = (1'b1 && ud_4_3_ge_m2);
+  wire ud_4_3_3_aq1 = ud_4_3_3_aq0 || (1'b1 && ud_4_3_ge_m1);
+  wire ud_4_3_3_aq2 = ud_4_3_3_aq1 || (1'b1 && ud_4_3_ge_0);
+  wire ud_4_3_3_aq3 = ud_4_3_3_aq2 || (1'b1 && ud_4_3_ge_1);
+  wire ud_4_3_3_best_right = !((ud_4_3_2_best_q0 && !ud_4_3_3_aq0) | (ud_4_3_2_best_q1 && !ud_4_3_3_aq1) | (ud_4_3_2_best_q2 && !ud_4_3_3_aq2) | (ud_4_3_2_best_q3 && !ud_4_3_3_aq3) | (1'b1 && !ud_4_3_3_aq3));
+  wire [6:0] ud_4_3_3_best_mask = ud_4_3_3_best_right ? {1'b1, ud_3_3_3_best_mask} : ud_4_3_2_best_mask;
+//
+// DP PREFIX (4,4): share one signed prefix difference across
+// all A-waiting budgets d=0..4; each retained mask has 8 issue bits.
+//
+  wire [8:0] ud_4_4_diff_cla_p = ud_pa_3 ^ ~ud_pb_3;
+  wire [8:0] ud_4_4_diff_cla_g = ud_pa_3 & ~ud_pb_3;
+  wire ud_4_4_diff_cla_c0 = 1'b1;
+  wire ud_4_4_diff_cla_c1 = (ud_4_4_diff_cla_g[0]) || (ud_4_4_diff_cla_c0 && ud_4_4_diff_cla_p[0]);
+  wire ud_4_4_diff_cla_c2 = (ud_4_4_diff_cla_g[0] && ud_4_4_diff_cla_p[1]) || (ud_4_4_diff_cla_g[1]) || (ud_4_4_diff_cla_c0 && ud_4_4_diff_cla_p[0] && ud_4_4_diff_cla_p[1]);
+  wire ud_4_4_diff_cla_c3 = (ud_4_4_diff_cla_g[0] && ud_4_4_diff_cla_p[1] && ud_4_4_diff_cla_p[2]) || (ud_4_4_diff_cla_g[1] && ud_4_4_diff_cla_p[2]) || (ud_4_4_diff_cla_g[2]) || (ud_4_4_diff_cla_c0 && ud_4_4_diff_cla_p[0] && ud_4_4_diff_cla_p[1] && ud_4_4_diff_cla_p[2]);
+  wire ud_4_4_diff_cla_c4 = (ud_4_4_diff_cla_g[3]) || (ud_4_4_diff_cla_c3 && ud_4_4_diff_cla_p[3]);
+  wire ud_4_4_diff_cla_c5 = (ud_4_4_diff_cla_g[3] && ud_4_4_diff_cla_p[4]) || (ud_4_4_diff_cla_g[4]) || (ud_4_4_diff_cla_c3 && ud_4_4_diff_cla_p[3] && ud_4_4_diff_cla_p[4]);
+  wire ud_4_4_diff_cla_c6 = (ud_4_4_diff_cla_g[3] && ud_4_4_diff_cla_p[4] && ud_4_4_diff_cla_p[5]) || (ud_4_4_diff_cla_g[4] && ud_4_4_diff_cla_p[5]) || (ud_4_4_diff_cla_g[5]) || (ud_4_4_diff_cla_c3 && ud_4_4_diff_cla_p[3] && ud_4_4_diff_cla_p[4] && ud_4_4_diff_cla_p[5]);
+  wire ud_4_4_diff_cla_c7 = (ud_4_4_diff_cla_g[6]) || (ud_4_4_diff_cla_c6 && ud_4_4_diff_cla_p[6]);
+  wire ud_4_4_diff_cla_c8 = (ud_4_4_diff_cla_g[6] && ud_4_4_diff_cla_p[7]) || (ud_4_4_diff_cla_g[7]) || (ud_4_4_diff_cla_c6 && ud_4_4_diff_cla_p[6] && ud_4_4_diff_cla_p[7]);
+  wire ud_4_4_diff_cla_c9 = (ud_4_4_diff_cla_g[6] && ud_4_4_diff_cla_p[7] && ud_4_4_diff_cla_p[8]) || (ud_4_4_diff_cla_g[7] && ud_4_4_diff_cla_p[8]) || (ud_4_4_diff_cla_g[8]) || (ud_4_4_diff_cla_c6 && ud_4_4_diff_cla_p[6] && ud_4_4_diff_cla_p[7] && ud_4_4_diff_cla_p[8]);
+  wire [9:0] ud_4_4_diff = {!ud_4_4_diff_cla_c9, (ud_4_4_diff_cla_p ^ {ud_4_4_diff_cla_c8, ud_4_4_diff_cla_c7, ud_4_4_diff_cla_c6, ud_4_4_diff_cla_c5, ud_4_4_diff_cla_c4, ud_4_4_diff_cla_c3, ud_4_4_diff_cla_c2, ud_4_4_diff_cla_c1, ud_4_4_diff_cla_c0})};
+  wire ud_4_4_ge_1 = !ud_4_4_diff[9] && ((|ud_4_4_diff[8:3]) || ud_4_4_diff[2:0] >= 3'd1);
+  wire ud_4_4_0_aq0 = (1'b0 && ud_4_4_ge_1);
+  wire ud_4_4_ge_2 = !ud_4_4_diff[9] && ((|ud_4_4_diff[8:3]) || ud_4_4_diff[2:0] >= 3'd2);
+  wire ud_4_4_0_aq1 = ud_4_4_0_aq0 || (ud_3_4_0_best_q1 && ud_4_4_ge_2);
+  wire ud_4_4_ge_3 = !ud_4_4_diff[9] && ((|ud_4_4_diff[8:3]) || ud_4_4_diff[2:0] >= 3'd3);
+  wire ud_4_4_0_aq2 = ud_4_4_0_aq1 || (ud_3_4_0_best_q2 && ud_4_4_ge_3);
+  wire ud_4_4_ge_4 = !ud_4_4_diff[9] && ((|ud_4_4_diff[8:3]) || ud_4_4_diff[2:0] >= 3'd4);
+  wire ud_4_4_0_aq3 = ud_4_4_0_aq2 || (1'b1 && ud_4_4_ge_4);
+  wire ud_4_4_ge_0 = !ud_4_4_diff[9];
+  wire ud_4_4_0_bq0 = 1'b0 && !ud_4_4_ge_0;
+  wire ud_4_4_0_bq1 = ud_4_3_0_best_q1 && !ud_4_4_ge_1;
+  wire ud_4_4_0_bq2 = ud_4_3_0_best_q2 && !ud_4_4_ge_2;
+  wire ud_4_4_0_bq3 = ud_4_3_0_best_q3 && !ud_4_4_ge_3;
+  wire ud_4_4_0_bq4 = 1'b1 && !ud_4_4_ge_4;
+  wire ud_4_4_0_best_q1 = ud_4_4_0_aq1 || ud_4_4_0_bq1;
+  wire ud_4_4_0_best_q2 = ud_4_4_0_aq2 || ud_4_4_0_bq2;
+  wire ud_4_4_0_best_q3 = ud_4_4_0_aq3 || ud_4_4_0_bq3;
+  wire ud_4_4_0_best_right = !((ud_4_4_0_aq0 && !ud_4_4_0_bq0) | (ud_4_4_0_aq1 && !ud_4_4_0_bq1) | (ud_4_4_0_aq2 && !ud_4_4_0_bq2) | (ud_4_4_0_aq3 && !ud_4_4_0_bq3) | (ud_4_4_0_aq3 && !ud_4_4_0_bq4));
+  wire [7:0] ud_4_4_0_best_mask = ud_4_4_0_best_right ? {1'b0, ud_4_3_0_best_mask} : {1'b1, ud_3_4_0_best_mask};
+  wire ud_4_4_1_aq0 = (ud_3_4_1_best_q0 && ud_4_4_ge_0);
+  wire ud_4_4_1_aq1 = ud_4_4_1_aq0 || (ud_3_4_1_best_q1 && ud_4_4_ge_1);
+  wire ud_4_4_1_aq2 = ud_4_4_1_aq1 || (ud_3_4_1_best_q2 && ud_4_4_ge_2);
+  wire ud_4_4_1_aq3 = ud_4_4_1_aq2 || (1'b1 && ud_4_4_ge_3);
+  wire ud_4_4_ge_m1 = !ud_4_4_diff[9] || ((&ud_4_4_diff[8:3]) && ud_4_4_diff[2:0] >= 3'd7);
+  wire ud_4_4_1_bq0 = ud_4_3_1_best_q0 && !ud_4_4_ge_m1;
+  wire ud_4_4_1_bq1 = ud_4_3_1_best_q1 && !ud_4_4_ge_0;
+  wire ud_4_4_1_bq2 = ud_4_3_1_best_q2 && !ud_4_4_ge_1;
+  wire ud_4_4_1_bq3 = ud_4_3_1_best_q3 && !ud_4_4_ge_2;
+  wire ud_4_4_1_bq4 = 1'b1 && !ud_4_4_ge_3;
+  wire ud_4_4_1_bestr_q0 = ud_4_4_1_aq0 || ud_4_4_1_bq0;
+  wire ud_4_4_1_bestr_q1 = ud_4_4_1_aq1 || ud_4_4_1_bq1;
+  wire ud_4_4_1_bestr_q2 = ud_4_4_1_aq2 || ud_4_4_1_bq2;
+  wire ud_4_4_1_bestr_q3 = ud_4_4_1_aq3 || ud_4_4_1_bq3;
+  wire ud_4_4_1_bestr_q4 = ud_4_4_1_aq3 || ud_4_4_1_bq4;
+  wire ud_4_4_1_bestr_right = (ud_4_4_1_bq0 && !ud_4_4_1_aq0) | (ud_4_4_1_bq1 && !ud_4_4_1_aq1) | (ud_4_4_1_bq2 && !ud_4_4_1_aq2) | (ud_4_4_1_bq3 && !ud_4_4_1_aq3) | (ud_4_4_1_bq4 && !ud_4_4_1_aq3);
+  wire [7:0] ud_4_4_1_bestr_mask = ud_4_4_1_bestr_right ? {1'b0, ud_4_3_1_best_mask} : {1'b1, ud_3_4_1_best_mask};
+  wire ud_4_4_1_best_q0 = 1'b0 || ud_4_4_1_bestr_q0;
+  wire ud_4_4_1_best_q1 = ud_4_4_0_best_q1 || ud_4_4_1_bestr_q1;
+  wire ud_4_4_1_best_q2 = ud_4_4_0_best_q2 || ud_4_4_1_bestr_q2;
+  wire ud_4_4_1_best_q3 = ud_4_4_0_best_q3 || ud_4_4_1_bestr_q3;
+  wire ud_4_4_1_best_right = !((1'b0 && !ud_4_4_1_bestr_q0) | (ud_4_4_0_best_q1 && !ud_4_4_1_bestr_q1) | (ud_4_4_0_best_q2 && !ud_4_4_1_bestr_q2) | (ud_4_4_0_best_q3 && !ud_4_4_1_bestr_q3) | (1'b1 && !ud_4_4_1_bestr_q4));
+  wire [7:0] ud_4_4_1_best_mask = ud_4_4_1_best_right ? ud_4_4_1_bestr_mask : ud_4_4_0_best_mask;
+  wire ud_4_4_2_aq0 = (ud_3_4_2_best_q0 && ud_4_4_ge_m1);
+  wire ud_4_4_2_aq1 = ud_4_4_2_aq0 || (ud_3_4_2_best_q1 && ud_4_4_ge_0);
+  wire ud_4_4_2_aq2 = ud_4_4_2_aq1 || (ud_3_4_2_best_q2 && ud_4_4_ge_1);
+  wire ud_4_4_2_aq3 = ud_4_4_2_aq2 || (1'b1 && ud_4_4_ge_2);
+  wire ud_4_4_ge_m2 = !ud_4_4_diff[9] || ((&ud_4_4_diff[8:3]) && ud_4_4_diff[2:0] >= 3'd6);
+  wire ud_4_4_2_bq0 = ud_4_3_2_best_q0 && !ud_4_4_ge_m2;
+  wire ud_4_4_2_bq1 = ud_4_3_2_best_q1 && !ud_4_4_ge_m1;
+  wire ud_4_4_2_bq2 = ud_4_3_2_best_q2 && !ud_4_4_ge_0;
+  wire ud_4_4_2_bq3 = ud_4_3_2_best_q3 && !ud_4_4_ge_1;
+  wire ud_4_4_2_bq4 = 1'b1 && !ud_4_4_ge_2;
+  wire ud_4_4_2_bestr_q0 = ud_4_4_2_aq0 || ud_4_4_2_bq0;
+  wire ud_4_4_2_bestr_q1 = ud_4_4_2_aq1 || ud_4_4_2_bq1;
+  wire ud_4_4_2_bestr_q2 = ud_4_4_2_aq2 || ud_4_4_2_bq2;
+  wire ud_4_4_2_bestr_q3 = ud_4_4_2_aq3 || ud_4_4_2_bq3;
+  wire ud_4_4_2_bestr_q4 = ud_4_4_2_aq3 || ud_4_4_2_bq4;
+  wire ud_4_4_2_bestr_right = (ud_4_4_2_bq0 && !ud_4_4_2_aq0) | (ud_4_4_2_bq1 && !ud_4_4_2_aq1) | (ud_4_4_2_bq2 && !ud_4_4_2_aq2) | (ud_4_4_2_bq3 && !ud_4_4_2_aq3) | (ud_4_4_2_bq4 && !ud_4_4_2_aq3);
+  wire [7:0] ud_4_4_2_bestr_mask = ud_4_4_2_bestr_right ? {1'b0, ud_4_3_2_best_mask} : {1'b1, ud_3_4_2_best_mask};
+  wire ud_4_4_2_best_q0 = ud_4_4_1_best_q0 || ud_4_4_2_bestr_q0;
+  wire ud_4_4_2_best_q1 = ud_4_4_1_best_q1 || ud_4_4_2_bestr_q1;
+  wire ud_4_4_2_best_q2 = ud_4_4_1_best_q2 || ud_4_4_2_bestr_q2;
+  wire ud_4_4_2_best_q3 = ud_4_4_1_best_q3 || ud_4_4_2_bestr_q3;
+  wire ud_4_4_2_best_right = !((ud_4_4_1_best_q0 && !ud_4_4_2_bestr_q0) | (ud_4_4_1_best_q1 && !ud_4_4_2_bestr_q1) | (ud_4_4_1_best_q2 && !ud_4_4_2_bestr_q2) | (ud_4_4_1_best_q3 && !ud_4_4_2_bestr_q3) | (1'b1 && !ud_4_4_2_bestr_q4));
+  wire [7:0] ud_4_4_2_best_mask = ud_4_4_2_best_right ? ud_4_4_2_bestr_mask : ud_4_4_1_best_mask;
+  wire ud_4_4_3_aq0 = (ud_3_4_3_best_q0 && ud_4_4_ge_m2);
+  wire ud_4_4_3_aq1 = ud_4_4_3_aq0 || (ud_3_4_3_best_q1 && ud_4_4_ge_m1);
+  wire ud_4_4_3_aq2 = ud_4_4_3_aq1 || (ud_3_4_3_best_q2 && ud_4_4_ge_0);
+  wire ud_4_4_3_aq3 = ud_4_4_3_aq2 || (1'b1 && ud_4_4_ge_1);
+  wire ud_4_4_ge_m3 = !ud_4_4_diff[9] || ((&ud_4_4_diff[8:3]) && ud_4_4_diff[2:0] >= 3'd5);
+  wire ud_4_4_3_bq0 = 1'b1 && !ud_4_4_ge_m3;
+  wire ud_4_4_3_bq1 = 1'b1 && !ud_4_4_ge_m2;
+  wire ud_4_4_3_bq2 = 1'b1 && !ud_4_4_ge_m1;
+  wire ud_4_4_3_bq3 = 1'b1 && !ud_4_4_ge_0;
+  wire ud_4_4_3_bq4 = 1'b1 && !ud_4_4_ge_1;
+  wire ud_4_4_3_bestr_q0 = ud_4_4_3_aq0 || ud_4_4_3_bq0;
+  wire ud_4_4_3_bestr_q1 = ud_4_4_3_aq1 || ud_4_4_3_bq1;
+  wire ud_4_4_3_bestr_q2 = ud_4_4_3_aq2 || ud_4_4_3_bq2;
+  wire ud_4_4_3_bestr_q3 = ud_4_4_3_aq3 || ud_4_4_3_bq3;
+  wire ud_4_4_3_bestr_q4 = ud_4_4_3_aq3 || ud_4_4_3_bq4;
+  wire ud_4_4_3_bestr_right = (ud_4_4_3_bq0 && !ud_4_4_3_aq0) | (ud_4_4_3_bq1 && !ud_4_4_3_aq1) | (ud_4_4_3_bq2 && !ud_4_4_3_aq2) | (ud_4_4_3_bq3 && !ud_4_4_3_aq3) | (ud_4_4_3_bq4 && !ud_4_4_3_aq3);
+  wire [7:0] ud_4_4_3_bestr_mask = ud_4_4_3_bestr_right ? {1'b0, ud_4_3_3_best_mask} : {1'b1, ud_3_4_3_best_mask};
+  wire ud_4_4_3_best_q0 = ud_4_4_2_best_q0 || ud_4_4_3_bestr_q0;
+  wire ud_4_4_3_best_q1 = ud_4_4_2_best_q1 || ud_4_4_3_bestr_q1;
+  wire ud_4_4_3_best_q2 = ud_4_4_2_best_q2 || ud_4_4_3_bestr_q2;
+  wire ud_4_4_3_best_q3 = ud_4_4_2_best_q3 || ud_4_4_3_bestr_q3;
+  wire ud_4_4_3_best_right = !((ud_4_4_2_best_q0 && !ud_4_4_3_bestr_q0) | (ud_4_4_2_best_q1 && !ud_4_4_3_bestr_q1) | (ud_4_4_2_best_q2 && !ud_4_4_3_bestr_q2) | (ud_4_4_2_best_q3 && !ud_4_4_3_bestr_q3) | (1'b1 && !ud_4_4_3_bestr_q4));
+  wire [7:0] ud_4_4_3_best_mask = ud_4_4_3_best_right ? ud_4_4_3_bestr_mask : ud_4_4_2_best_mask;
+  wire ud_4_4_4_aq0 = (1'b1 && ud_4_4_ge_m3);
+  wire ud_4_4_4_aq1 = ud_4_4_4_aq0 || (1'b1 && ud_4_4_ge_m2);
+  wire ud_4_4_4_aq2 = ud_4_4_4_aq1 || (1'b1 && ud_4_4_ge_m1);
+  wire ud_4_4_4_aq3 = ud_4_4_4_aq2 || (1'b1 && ud_4_4_ge_0);
+  wire ud_4_4_4_best_right = !((ud_4_4_3_best_q0 && !ud_4_4_4_aq0) | (ud_4_4_3_best_q1 && !ud_4_4_4_aq1) | (ud_4_4_3_best_q2 && !ud_4_4_4_aq2) | (ud_4_4_3_best_q3 && !ud_4_4_4_aq3) | (1'b1 && !ud_4_4_4_aq3));
+  wire [7:0] ud_4_4_4_best_mask = ud_4_4_4_best_right ? {1'b1, ud_3_4_4_best_mask} : ud_4_4_3_best_mask;
+//
+// REMOVE THE COMMON COMPLETION BASELINE
+// SA=ud_pa_4, SB=ud_pb_6 and base=max(SA,SB). For accumulated waits da/db,
+// C=max(SA+da,SB+db). A final threshold t is feasible exactly when both
+// finishes fit base+t. Reuse delta=SA-SB to test those inequalities.
+// This reduces final comparisons to small extra delays instead of comparing
+// full completion times for every candidate.
+//
+  wire [8:0] ud_total_diff_cla_p = ud_pa_4 ^ ~ud_pb_6;
+  wire [8:0] ud_total_diff_cla_g = ud_pa_4 & ~ud_pb_6;
+  wire ud_total_diff_cla_c0 = 1'b1;
+  wire ud_total_diff_cla_c1 = (ud_total_diff_cla_g[0]) || (ud_total_diff_cla_c0 && ud_total_diff_cla_p[0]);
+  wire ud_total_diff_cla_c2 = (ud_total_diff_cla_g[0] && ud_total_diff_cla_p[1]) || (ud_total_diff_cla_g[1]) || (ud_total_diff_cla_c0 && ud_total_diff_cla_p[0] && ud_total_diff_cla_p[1]);
+  wire ud_total_diff_cla_c3 = (ud_total_diff_cla_g[0] && ud_total_diff_cla_p[1] && ud_total_diff_cla_p[2]) || (ud_total_diff_cla_g[1] && ud_total_diff_cla_p[2]) || (ud_total_diff_cla_g[2]) || (ud_total_diff_cla_c0 && ud_total_diff_cla_p[0] && ud_total_diff_cla_p[1] && ud_total_diff_cla_p[2]);
+  wire ud_total_diff_cla_c4 = (ud_total_diff_cla_g[3]) || (ud_total_diff_cla_c3 && ud_total_diff_cla_p[3]);
+  wire ud_total_diff_cla_c5 = (ud_total_diff_cla_g[3] && ud_total_diff_cla_p[4]) || (ud_total_diff_cla_g[4]) || (ud_total_diff_cla_c3 && ud_total_diff_cla_p[3] && ud_total_diff_cla_p[4]);
+  wire ud_total_diff_cla_c6 = (ud_total_diff_cla_g[3] && ud_total_diff_cla_p[4] && ud_total_diff_cla_p[5]) || (ud_total_diff_cla_g[4] && ud_total_diff_cla_p[5]) || (ud_total_diff_cla_g[5]) || (ud_total_diff_cla_c3 && ud_total_diff_cla_p[3] && ud_total_diff_cla_p[4] && ud_total_diff_cla_p[5]);
+  wire ud_total_diff_cla_c7 = (ud_total_diff_cla_g[6]) || (ud_total_diff_cla_c6 && ud_total_diff_cla_p[6]);
+  wire ud_total_diff_cla_c8 = (ud_total_diff_cla_g[6] && ud_total_diff_cla_p[7]) || (ud_total_diff_cla_g[7]) || (ud_total_diff_cla_c6 && ud_total_diff_cla_p[6] && ud_total_diff_cla_p[7]);
+  wire ud_total_diff_cla_c9 = (ud_total_diff_cla_g[6] && ud_total_diff_cla_p[7] && ud_total_diff_cla_p[8]) || (ud_total_diff_cla_g[7] && ud_total_diff_cla_p[8]) || (ud_total_diff_cla_g[8]) || (ud_total_diff_cla_c6 && ud_total_diff_cla_p[6] && ud_total_diff_cla_p[7] && ud_total_diff_cla_p[8]);
+  wire [9:0] ud_total_diff = {!ud_total_diff_cla_c9, (ud_total_diff_cla_p ^ {ud_total_diff_cla_c8, ud_total_diff_cla_c7, ud_total_diff_cla_c6, ud_total_diff_cla_c5, ud_total_diff_cla_c4, ud_total_diff_cla_c3, ud_total_diff_cla_c2, ud_total_diff_cla_c1, ud_total_diff_cla_c0})};
+  wire ud_total_pos = !ud_total_diff[9];
+  wire [8:0] ud_total_base = ud_total_pos ? ud_pa_4 : ud_pb_6;
+//
+// FINALISTS FOR THE THREE LEGAL TWO-CHAIN SIZES
+// Enumerate A lengths 2,3,4 and their 7,6,5 budget choices: 18 finalists.
+// The size predicate disables candidates for the wrong actual split.
+// ud_end_i_d_qt means the candidate finishes within base+t. Seven final
+// threshold bits (t=0..6) cover the attainable optimum. The optimum
+// needs at most four extra cycles; this does not bound every candidate or
+// authorize truncating intermediate waiting states.
+//
+  wire ud_size_2 = count_a == 4'd2;
+  wire ud_total_ge_0 = !ud_total_diff[9];
+  wire ud_total_ge_1 = !ud_total_diff[9] && ((|ud_total_diff[8:3]) || ud_total_diff[2:0] >= 3'd1);
+  wire ud_total_ge_2 = !ud_total_diff[9] && ((|ud_total_diff[8:3]) || ud_total_diff[2:0] >= 3'd2);
+  wire ud_end_2_0_q0 = ud_size_2 && (ud_total_pos ? ((1'b0 && ud_total_ge_0) | (ud_2_6_0_best_q1 && ud_total_ge_1) | (1'b1 && ud_total_ge_2)) : (1'b0 && !ud_total_ge_1));
+  wire ud_total_ge_m1 = !ud_total_diff[9] || ((&ud_total_diff[8:3]) && ud_total_diff[2:0] >= 3'd7);
+  wire ud_end_2_0_q1 = ud_size_2 && (ud_total_pos ? ((1'b0 && ud_total_ge_m1) | (ud_2_6_0_best_q1 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_2_6_0_best_q1 && !ud_total_ge_2));
+  wire ud_total_ge_m2 = !ud_total_diff[9] || ((&ud_total_diff[8:3]) && ud_total_diff[2:0] >= 3'd6);
+  wire ud_total_ge_3 = !ud_total_diff[9] && ((|ud_total_diff[8:3]) || ud_total_diff[2:0] >= 3'd3);
+  wire ud_end_2_0_q2 = ud_size_2 && (ud_total_pos ? ((1'b0 && ud_total_ge_m2) | (ud_2_6_0_best_q1 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_3));
+  wire ud_total_ge_m3 = !ud_total_diff[9] || ((&ud_total_diff[8:3]) && ud_total_diff[2:0] >= 3'd5);
+  wire ud_total_ge_4 = !ud_total_diff[9] && ((|ud_total_diff[8:3]) || ud_total_diff[2:0] >= 3'd4);
+  wire ud_end_2_0_q3 = ud_size_2 && (ud_total_pos ? ((1'b0 && ud_total_ge_m3) | (ud_2_6_0_best_q1 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_4));
+  wire ud_total_ge_m4 = !ud_total_diff[9] || ((&ud_total_diff[8:3]) && ud_total_diff[2:0] >= 3'd4);
+  wire ud_total_ge_5 = !ud_total_diff[9] && ((|ud_total_diff[8:3]) || ud_total_diff[2:0] >= 3'd5);
+  wire ud_end_2_0_q4 = ud_size_2 && (ud_total_pos ? ((1'b0 && ud_total_ge_m4) | (ud_2_6_0_best_q1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_5));
+  wire ud_total_ge_m5 = !ud_total_diff[9] || ((&ud_total_diff[8:3]) && ud_total_diff[2:0] >= 3'd3);
+  wire ud_total_ge_6 = !ud_total_diff[9] && ((|ud_total_diff[8:3]) || ud_total_diff[2:0] >= 3'd6);
+  wire ud_end_2_0_q5 = ud_size_2 && (ud_total_pos ? ((1'b0 && ud_total_ge_m5) | (ud_2_6_0_best_q1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_6));
+  wire ud_total_ge_m6 = !ud_total_diff[9] || ((&ud_total_diff[8:3]) && ud_total_diff[2:0] >= 3'd2);
+  wire ud_total_ge_7 = !ud_total_diff[9] && ((|ud_total_diff[8:3]) || ud_total_diff[2:0] >= 3'd7);
+  wire ud_end_2_0_q6 = ud_size_2 && (ud_total_pos ? ((1'b0 && ud_total_ge_m6) | (ud_2_6_0_best_q1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4)) : (1'b1 && !ud_total_ge_7));
+  wire ud_end_2_1_q0 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_1_best_q0 && !ud_total_ge_0));
+  wire ud_end_2_1_q1 = ud_size_2 && (ud_total_pos ? ((ud_2_6_1_best_q0 && ud_total_ge_m1) | (ud_2_6_1_best_q1 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_2_6_1_best_q1 && !ud_total_ge_1));
+  wire ud_end_2_1_q2 = ud_size_2 && (ud_total_pos ? ((ud_2_6_1_best_q0 && ud_total_ge_m2) | (ud_2_6_1_best_q1 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_2_1_q3 = ud_size_2 && (ud_total_pos ? ((ud_2_6_1_best_q0 && ud_total_ge_m3) | (ud_2_6_1_best_q1 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_2_1_q4 = ud_size_2 && (ud_total_pos ? ((ud_2_6_1_best_q0 && ud_total_ge_m4) | (ud_2_6_1_best_q1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_2_1_q5 = ud_size_2 && (ud_total_pos ? ((ud_2_6_1_best_q0 && ud_total_ge_m5) | (ud_2_6_1_best_q1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_5));
+  wire ud_end_2_1_q6 = ud_size_2 && (ud_total_pos ? ((ud_2_6_1_best_q0 && ud_total_ge_m6) | (ud_2_6_1_best_q1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4)) : (1'b1 && !ud_total_ge_6));
+  wire ud_end_2_2_q0 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_2_best_q0 && !ud_total_ge_m1));
+  wire ud_end_2_2_q1 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_2_best_q1 && !ud_total_ge_0));
+  wire ud_end_2_2_q2 = ud_size_2 && (ud_total_pos ? ((ud_2_6_2_best_q0 && ud_total_ge_m2) | (ud_2_6_2_best_q1 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_1));
+  wire ud_end_2_2_q3 = ud_size_2 && (ud_total_pos ? ((ud_2_6_2_best_q0 && ud_total_ge_m3) | (ud_2_6_2_best_q1 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_2_2_q4 = ud_size_2 && (ud_total_pos ? ((ud_2_6_2_best_q0 && ud_total_ge_m4) | (ud_2_6_2_best_q1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_2_2_q5 = ud_size_2 && (ud_total_pos ? ((ud_2_6_2_best_q0 && ud_total_ge_m5) | (ud_2_6_2_best_q1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_2_2_q6 = ud_size_2 && (ud_total_pos ? ((ud_2_6_2_best_q0 && ud_total_ge_m6) | (ud_2_6_2_best_q1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4)) : (1'b1 && !ud_total_ge_5));
+  wire ud_end_2_3_q0 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_3_best_q0 && !ud_total_ge_m2));
+  wire ud_end_2_3_q1 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_3_best_q1 && !ud_total_ge_m1));
+  wire ud_end_2_3_q2 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_0));
+  wire ud_end_2_3_q3 = ud_size_2 && (ud_total_pos ? ((ud_2_6_3_best_q0 && ud_total_ge_m3) | (ud_2_6_3_best_q1 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_1));
+  wire ud_end_2_3_q4 = ud_size_2 && (ud_total_pos ? ((ud_2_6_3_best_q0 && ud_total_ge_m4) | (ud_2_6_3_best_q1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_2_3_q5 = ud_size_2 && (ud_total_pos ? ((ud_2_6_3_best_q0 && ud_total_ge_m5) | (ud_2_6_3_best_q1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_2_3_q6 = ud_size_2 && (ud_total_pos ? ((ud_2_6_3_best_q0 && ud_total_ge_m6) | (ud_2_6_3_best_q1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_2_4_q0 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_4_best_q0 && !ud_total_ge_m3));
+  wire ud_end_2_4_q1 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_4_best_q1 && !ud_total_ge_m2));
+  wire ud_end_2_4_q2 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m1));
+  wire ud_end_2_4_q3 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_0));
+  wire ud_end_2_4_q4 = ud_size_2 && (ud_total_pos ? ((ud_2_6_4_best_q0 && ud_total_ge_m4) | (ud_2_6_4_best_q1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_1));
+  wire ud_end_2_4_q5 = ud_size_2 && (ud_total_pos ? ((ud_2_6_4_best_q0 && ud_total_ge_m5) | (ud_2_6_4_best_q1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_2_4_q6 = ud_size_2 && (ud_total_pos ? ((ud_2_6_4_best_q0 && ud_total_ge_m6) | (ud_2_6_4_best_q1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_2_5_q0 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_5_best_q0 && !ud_total_ge_m4));
+  wire ud_end_2_5_q1 = ud_size_2 && (ud_total_pos ? (1'b0) : (ud_2_6_5_best_q1 && !ud_total_ge_m3));
+  wire ud_end_2_5_q2 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m2));
+  wire ud_end_2_5_q3 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m1));
+  wire ud_end_2_5_q4 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_0));
+  wire ud_end_2_5_q5 = ud_size_2 && (ud_total_pos ? ((ud_2_6_5_best_q0 && ud_total_ge_m5) | (ud_2_6_5_best_q1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_1));
+  wire ud_end_2_5_q6 = ud_size_2 && (ud_total_pos ? ((ud_2_6_5_best_q0 && ud_total_ge_m6) | (ud_2_6_5_best_q1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_2_6_q0 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m5));
+  wire ud_end_2_6_q1 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m4));
+  wire ud_end_2_6_q2 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m3));
+  wire ud_end_2_6_q3 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m2));
+  wire ud_end_2_6_q4 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m1));
+  wire ud_end_2_6_q5 = ud_size_2 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_0));
+  wire ud_end_2_6_q6 = ud_size_2 && (ud_total_pos ? ((1'b1 && ud_total_ge_m6) | (1'b1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4)) : (1'b1 && !ud_total_ge_1));
+  wire ud_size_3 = count_a == 4'd3;
+  wire ud_end_3_0_q0 = ud_size_3 && (ud_total_pos ? ((1'b0 && ud_total_ge_0) | (ud_3_5_0_best_q1 && ud_total_ge_1) | (ud_3_5_0_best_q2 && ud_total_ge_2) | (1'b1 && ud_total_ge_3)) : (1'b0 && !ud_total_ge_1));
+  wire ud_end_3_0_q1 = ud_size_3 && (ud_total_pos ? ((1'b0 && ud_total_ge_m1) | (ud_3_5_0_best_q1 && ud_total_ge_0) | (ud_3_5_0_best_q2 && ud_total_ge_1) | (1'b1 && ud_total_ge_2)) : (ud_3_5_0_best_q1 && !ud_total_ge_2));
+  wire ud_end_3_0_q2 = ud_size_3 && (ud_total_pos ? ((1'b0 && ud_total_ge_m2) | (ud_3_5_0_best_q1 && ud_total_ge_m1) | (ud_3_5_0_best_q2 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_3_5_0_best_q2 && !ud_total_ge_3));
+  wire ud_end_3_0_q3 = ud_size_3 && (ud_total_pos ? ((1'b0 && ud_total_ge_m3) | (ud_3_5_0_best_q1 && ud_total_ge_m2) | (ud_3_5_0_best_q2 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_3_0_q4 = ud_size_3 && (ud_total_pos ? ((1'b0 && ud_total_ge_m4) | (ud_3_5_0_best_q1 && ud_total_ge_m3) | (ud_3_5_0_best_q2 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_5));
+  wire ud_end_3_0_q5 = ud_size_3 && (ud_total_pos ? ((1'b0 && ud_total_ge_m5) | (ud_3_5_0_best_q1 && ud_total_ge_m4) | (ud_3_5_0_best_q2 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_6));
+  wire ud_end_3_0_q6 = ud_size_3 && (ud_total_pos ? ((1'b0 && ud_total_ge_m6) | (ud_3_5_0_best_q1 && ud_total_ge_m5) | (ud_3_5_0_best_q2 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_7));
+  wire ud_end_3_1_q0 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_1_best_q0 && !ud_total_ge_0));
+  wire ud_end_3_1_q1 = ud_size_3 && (ud_total_pos ? ((ud_3_5_1_best_q0 && ud_total_ge_m1) | (ud_3_5_1_best_q1 && ud_total_ge_0) | (ud_3_5_1_best_q2 && ud_total_ge_1) | (1'b1 && ud_total_ge_2)) : (ud_3_5_1_best_q1 && !ud_total_ge_1));
+  wire ud_end_3_1_q2 = ud_size_3 && (ud_total_pos ? ((ud_3_5_1_best_q0 && ud_total_ge_m2) | (ud_3_5_1_best_q1 && ud_total_ge_m1) | (ud_3_5_1_best_q2 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_3_5_1_best_q2 && !ud_total_ge_2));
+  wire ud_end_3_1_q3 = ud_size_3 && (ud_total_pos ? ((ud_3_5_1_best_q0 && ud_total_ge_m3) | (ud_3_5_1_best_q1 && ud_total_ge_m2) | (ud_3_5_1_best_q2 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_3_1_q4 = ud_size_3 && (ud_total_pos ? ((ud_3_5_1_best_q0 && ud_total_ge_m4) | (ud_3_5_1_best_q1 && ud_total_ge_m3) | (ud_3_5_1_best_q2 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_3_1_q5 = ud_size_3 && (ud_total_pos ? ((ud_3_5_1_best_q0 && ud_total_ge_m5) | (ud_3_5_1_best_q1 && ud_total_ge_m4) | (ud_3_5_1_best_q2 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_5));
+  wire ud_end_3_1_q6 = ud_size_3 && (ud_total_pos ? ((ud_3_5_1_best_q0 && ud_total_ge_m6) | (ud_3_5_1_best_q1 && ud_total_ge_m5) | (ud_3_5_1_best_q2 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_6));
+  wire ud_end_3_2_q0 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_2_best_q0 && !ud_total_ge_m1));
+  wire ud_end_3_2_q1 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_2_best_q1 && !ud_total_ge_0));
+  wire ud_end_3_2_q2 = ud_size_3 && (ud_total_pos ? ((ud_3_5_2_best_q0 && ud_total_ge_m2) | (ud_3_5_2_best_q1 && ud_total_ge_m1) | (ud_3_5_2_best_q2 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_3_5_2_best_q2 && !ud_total_ge_1));
+  wire ud_end_3_2_q3 = ud_size_3 && (ud_total_pos ? ((ud_3_5_2_best_q0 && ud_total_ge_m3) | (ud_3_5_2_best_q1 && ud_total_ge_m2) | (ud_3_5_2_best_q2 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_3_2_q4 = ud_size_3 && (ud_total_pos ? ((ud_3_5_2_best_q0 && ud_total_ge_m4) | (ud_3_5_2_best_q1 && ud_total_ge_m3) | (ud_3_5_2_best_q2 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_3_2_q5 = ud_size_3 && (ud_total_pos ? ((ud_3_5_2_best_q0 && ud_total_ge_m5) | (ud_3_5_2_best_q1 && ud_total_ge_m4) | (ud_3_5_2_best_q2 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_3_2_q6 = ud_size_3 && (ud_total_pos ? ((ud_3_5_2_best_q0 && ud_total_ge_m6) | (ud_3_5_2_best_q1 && ud_total_ge_m5) | (ud_3_5_2_best_q2 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_5));
+  wire ud_end_3_3_q0 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_3_best_q0 && !ud_total_ge_m2));
+  wire ud_end_3_3_q1 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_3_best_q1 && !ud_total_ge_m1));
+  wire ud_end_3_3_q2 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_3_best_q2 && !ud_total_ge_0));
+  wire ud_end_3_3_q3 = ud_size_3 && (ud_total_pos ? ((ud_3_5_3_best_q0 && ud_total_ge_m3) | (ud_3_5_3_best_q1 && ud_total_ge_m2) | (ud_3_5_3_best_q2 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_1));
+  wire ud_end_3_3_q4 = ud_size_3 && (ud_total_pos ? ((ud_3_5_3_best_q0 && ud_total_ge_m4) | (ud_3_5_3_best_q1 && ud_total_ge_m3) | (ud_3_5_3_best_q2 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_3_3_q5 = ud_size_3 && (ud_total_pos ? ((ud_3_5_3_best_q0 && ud_total_ge_m5) | (ud_3_5_3_best_q1 && ud_total_ge_m4) | (ud_3_5_3_best_q2 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_3_3_q6 = ud_size_3 && (ud_total_pos ? ((ud_3_5_3_best_q0 && ud_total_ge_m6) | (ud_3_5_3_best_q1 && ud_total_ge_m5) | (ud_3_5_3_best_q2 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_3_4_q0 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_4_best_q0 && !ud_total_ge_m3));
+  wire ud_end_3_4_q1 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_4_best_q1 && !ud_total_ge_m2));
+  wire ud_end_3_4_q2 = ud_size_3 && (ud_total_pos ? (1'b0) : (ud_3_5_4_best_q2 && !ud_total_ge_m1));
+  wire ud_end_3_4_q3 = ud_size_3 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_0));
+  wire ud_end_3_4_q4 = ud_size_3 && (ud_total_pos ? ((ud_3_5_4_best_q0 && ud_total_ge_m4) | (ud_3_5_4_best_q1 && ud_total_ge_m3) | (ud_3_5_4_best_q2 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_1));
+  wire ud_end_3_4_q5 = ud_size_3 && (ud_total_pos ? ((ud_3_5_4_best_q0 && ud_total_ge_m5) | (ud_3_5_4_best_q1 && ud_total_ge_m4) | (ud_3_5_4_best_q2 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_3_4_q6 = ud_size_3 && (ud_total_pos ? ((ud_3_5_4_best_q0 && ud_total_ge_m6) | (ud_3_5_4_best_q1 && ud_total_ge_m5) | (ud_3_5_4_best_q2 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_3_5_q0 = ud_size_3 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m4));
+  wire ud_end_3_5_q1 = ud_size_3 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m3));
+  wire ud_end_3_5_q2 = ud_size_3 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m2));
+  wire ud_end_3_5_q3 = ud_size_3 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m1));
+  wire ud_end_3_5_q4 = ud_size_3 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_0));
+  wire ud_end_3_5_q5 = ud_size_3 && (ud_total_pos ? ((1'b1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_1));
+  wire ud_end_3_5_q6 = ud_size_3 && (ud_total_pos ? ((1'b1 && ud_total_ge_m6) | (1'b1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3)) : (1'b1 && !ud_total_ge_2));
+  wire ud_size_4 = count_a == 4'd4;
+  wire ud_end_4_0_q0 = ud_size_4 && (ud_total_pos ? ((1'b0 && ud_total_ge_0) | (ud_4_4_0_best_q1 && ud_total_ge_1) | (ud_4_4_0_best_q2 && ud_total_ge_2) | (ud_4_4_0_best_q3 && ud_total_ge_3) | (1'b1 && ud_total_ge_4)) : (1'b0 && !ud_total_ge_1));
+  wire ud_end_4_0_q1 = ud_size_4 && (ud_total_pos ? ((1'b0 && ud_total_ge_m1) | (ud_4_4_0_best_q1 && ud_total_ge_0) | (ud_4_4_0_best_q2 && ud_total_ge_1) | (ud_4_4_0_best_q3 && ud_total_ge_2) | (1'b1 && ud_total_ge_3)) : (ud_4_4_0_best_q1 && !ud_total_ge_2));
+  wire ud_end_4_0_q2 = ud_size_4 && (ud_total_pos ? ((1'b0 && ud_total_ge_m2) | (ud_4_4_0_best_q1 && ud_total_ge_m1) | (ud_4_4_0_best_q2 && ud_total_ge_0) | (ud_4_4_0_best_q3 && ud_total_ge_1) | (1'b1 && ud_total_ge_2)) : (ud_4_4_0_best_q2 && !ud_total_ge_3));
+  wire ud_end_4_0_q3 = ud_size_4 && (ud_total_pos ? ((1'b0 && ud_total_ge_m3) | (ud_4_4_0_best_q1 && ud_total_ge_m2) | (ud_4_4_0_best_q2 && ud_total_ge_m1) | (ud_4_4_0_best_q3 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_4_4_0_best_q3 && !ud_total_ge_4));
+  wire ud_end_4_0_q4 = ud_size_4 && (ud_total_pos ? ((1'b0 && ud_total_ge_m4) | (ud_4_4_0_best_q1 && ud_total_ge_m3) | (ud_4_4_0_best_q2 && ud_total_ge_m2) | (ud_4_4_0_best_q3 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_5));
+  wire ud_end_4_0_q5 = ud_size_4 && (ud_total_pos ? ((1'b0 && ud_total_ge_m5) | (ud_4_4_0_best_q1 && ud_total_ge_m4) | (ud_4_4_0_best_q2 && ud_total_ge_m3) | (ud_4_4_0_best_q3 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_6));
+  wire ud_end_4_0_q6 = ud_size_4 && (ud_total_pos ? ((1'b0 && ud_total_ge_m6) | (ud_4_4_0_best_q1 && ud_total_ge_m5) | (ud_4_4_0_best_q2 && ud_total_ge_m4) | (ud_4_4_0_best_q3 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_7));
+  wire ud_end_4_1_q0 = ud_size_4 && (ud_total_pos ? (1'b0) : (ud_4_4_1_best_q0 && !ud_total_ge_0));
+  wire ud_end_4_1_q1 = ud_size_4 && (ud_total_pos ? ((ud_4_4_1_best_q0 && ud_total_ge_m1) | (ud_4_4_1_best_q1 && ud_total_ge_0) | (ud_4_4_1_best_q2 && ud_total_ge_1) | (ud_4_4_1_best_q3 && ud_total_ge_2) | (1'b1 && ud_total_ge_3)) : (ud_4_4_1_best_q1 && !ud_total_ge_1));
+  wire ud_end_4_1_q2 = ud_size_4 && (ud_total_pos ? ((ud_4_4_1_best_q0 && ud_total_ge_m2) | (ud_4_4_1_best_q1 && ud_total_ge_m1) | (ud_4_4_1_best_q2 && ud_total_ge_0) | (ud_4_4_1_best_q3 && ud_total_ge_1) | (1'b1 && ud_total_ge_2)) : (ud_4_4_1_best_q2 && !ud_total_ge_2));
+  wire ud_end_4_1_q3 = ud_size_4 && (ud_total_pos ? ((ud_4_4_1_best_q0 && ud_total_ge_m3) | (ud_4_4_1_best_q1 && ud_total_ge_m2) | (ud_4_4_1_best_q2 && ud_total_ge_m1) | (ud_4_4_1_best_q3 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_4_4_1_best_q3 && !ud_total_ge_3));
+  wire ud_end_4_1_q4 = ud_size_4 && (ud_total_pos ? ((ud_4_4_1_best_q0 && ud_total_ge_m4) | (ud_4_4_1_best_q1 && ud_total_ge_m3) | (ud_4_4_1_best_q2 && ud_total_ge_m2) | (ud_4_4_1_best_q3 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_4_1_q5 = ud_size_4 && (ud_total_pos ? ((ud_4_4_1_best_q0 && ud_total_ge_m5) | (ud_4_4_1_best_q1 && ud_total_ge_m4) | (ud_4_4_1_best_q2 && ud_total_ge_m3) | (ud_4_4_1_best_q3 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_5));
+  wire ud_end_4_1_q6 = ud_size_4 && (ud_total_pos ? ((ud_4_4_1_best_q0 && ud_total_ge_m6) | (ud_4_4_1_best_q1 && ud_total_ge_m5) | (ud_4_4_1_best_q2 && ud_total_ge_m4) | (ud_4_4_1_best_q3 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_6));
+  wire ud_end_4_2_q0 = ud_size_4 && (ud_total_pos ? (1'b0) : (ud_4_4_2_best_q0 && !ud_total_ge_m1));
+  wire ud_end_4_2_q1 = ud_size_4 && (ud_total_pos ? (1'b0) : (ud_4_4_2_best_q1 && !ud_total_ge_0));
+  wire ud_end_4_2_q2 = ud_size_4 && (ud_total_pos ? ((ud_4_4_2_best_q0 && ud_total_ge_m2) | (ud_4_4_2_best_q1 && ud_total_ge_m1) | (ud_4_4_2_best_q2 && ud_total_ge_0) | (ud_4_4_2_best_q3 && ud_total_ge_1) | (1'b1 && ud_total_ge_2)) : (ud_4_4_2_best_q2 && !ud_total_ge_1));
+  wire ud_end_4_2_q3 = ud_size_4 && (ud_total_pos ? ((ud_4_4_2_best_q0 && ud_total_ge_m3) | (ud_4_4_2_best_q1 && ud_total_ge_m2) | (ud_4_4_2_best_q2 && ud_total_ge_m1) | (ud_4_4_2_best_q3 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_4_4_2_best_q3 && !ud_total_ge_2));
+  wire ud_end_4_2_q4 = ud_size_4 && (ud_total_pos ? ((ud_4_4_2_best_q0 && ud_total_ge_m4) | (ud_4_4_2_best_q1 && ud_total_ge_m3) | (ud_4_4_2_best_q2 && ud_total_ge_m2) | (ud_4_4_2_best_q3 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_4_2_q5 = ud_size_4 && (ud_total_pos ? ((ud_4_4_2_best_q0 && ud_total_ge_m5) | (ud_4_4_2_best_q1 && ud_total_ge_m4) | (ud_4_4_2_best_q2 && ud_total_ge_m3) | (ud_4_4_2_best_q3 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_4_2_q6 = ud_size_4 && (ud_total_pos ? ((ud_4_4_2_best_q0 && ud_total_ge_m6) | (ud_4_4_2_best_q1 && ud_total_ge_m5) | (ud_4_4_2_best_q2 && ud_total_ge_m4) | (ud_4_4_2_best_q3 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_5));
+  wire ud_end_4_3_q0 = ud_size_4 && (ud_total_pos ? (1'b0) : (ud_4_4_3_best_q0 && !ud_total_ge_m2));
+  wire ud_end_4_3_q1 = ud_size_4 && (ud_total_pos ? (1'b0) : (ud_4_4_3_best_q1 && !ud_total_ge_m1));
+  wire ud_end_4_3_q2 = ud_size_4 && (ud_total_pos ? (1'b0) : (ud_4_4_3_best_q2 && !ud_total_ge_0));
+  wire ud_end_4_3_q3 = ud_size_4 && (ud_total_pos ? ((ud_4_4_3_best_q0 && ud_total_ge_m3) | (ud_4_4_3_best_q1 && ud_total_ge_m2) | (ud_4_4_3_best_q2 && ud_total_ge_m1) | (ud_4_4_3_best_q3 && ud_total_ge_0) | (1'b1 && ud_total_ge_1)) : (ud_4_4_3_best_q3 && !ud_total_ge_1));
+  wire ud_end_4_3_q4 = ud_size_4 && (ud_total_pos ? ((ud_4_4_3_best_q0 && ud_total_ge_m4) | (ud_4_4_3_best_q1 && ud_total_ge_m3) | (ud_4_4_3_best_q2 && ud_total_ge_m2) | (ud_4_4_3_best_q3 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_4_3_q5 = ud_size_4 && (ud_total_pos ? ((ud_4_4_3_best_q0 && ud_total_ge_m5) | (ud_4_4_3_best_q1 && ud_total_ge_m4) | (ud_4_4_3_best_q2 && ud_total_ge_m3) | (ud_4_4_3_best_q3 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_3));
+  wire ud_end_4_3_q6 = ud_size_4 && (ud_total_pos ? ((ud_4_4_3_best_q0 && ud_total_ge_m6) | (ud_4_4_3_best_q1 && ud_total_ge_m5) | (ud_4_4_3_best_q2 && ud_total_ge_m4) | (ud_4_4_3_best_q3 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_4));
+  wire ud_end_4_4_q0 = ud_size_4 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m3));
+  wire ud_end_4_4_q1 = ud_size_4 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m2));
+  wire ud_end_4_4_q2 = ud_size_4 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_m1));
+  wire ud_end_4_4_q3 = ud_size_4 && (ud_total_pos ? (1'b0) : (1'b1 && !ud_total_ge_0));
+  wire ud_end_4_4_q4 = ud_size_4 && (ud_total_pos ? ((1'b1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1) | (1'b1 && ud_total_ge_0)) : (1'b1 && !ud_total_ge_1));
+  wire ud_end_4_4_q5 = ud_size_4 && (ud_total_pos ? ((1'b1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2) | (1'b1 && ud_total_ge_m1)) : (1'b1 && !ud_total_ge_2));
+  wire ud_end_4_4_q6 = ud_size_4 && (ud_total_pos ? ((1'b1 && ud_total_ge_m6) | (1'b1 && ud_total_ge_m5) | (1'b1 && ud_total_ge_m4) | (1'b1 && ud_total_ge_m3) | (1'b1 && ud_total_ge_m2)) : (1'b1 && !ud_total_ge_3));
+//
+// FINAL SCORE TOURNAMENT WITH AN ATTAINING WITNESS
+// OR the seven feasibility bits to represent the better score. The right
+// candidate wins only if it adds a feasible threshold missing on the left;
+// otherwise retain the left mask. This final tournament is left-on-tie,
+// independently of the DP's inner/outer witness choices.
+// All nodes are combinational reductions, not sequential comparisons.
+//
+  wire ud_finallll_q0 = ud_end_2_0_q0 || ud_end_2_1_q0;
+  wire ud_finallll_q1 = ud_end_2_0_q1 || ud_end_2_1_q1;
+  wire ud_finallll_q2 = ud_end_2_0_q2 || ud_end_2_1_q2;
+  wire ud_finallll_q3 = ud_end_2_0_q3 || ud_end_2_1_q3;
+  wire ud_finallll_q4 = ud_end_2_0_q4 || ud_end_2_1_q4;
+  wire ud_finallll_q5 = ud_end_2_0_q5 || ud_end_2_1_q5;
+  wire ud_finallll_q6 = ud_end_2_0_q6 || ud_end_2_1_q6;
+  wire ud_finallll_right = (ud_end_2_1_q0 && !ud_end_2_0_q0) | (ud_end_2_1_q1 && !ud_end_2_0_q1) | (ud_end_2_1_q2 && !ud_end_2_0_q2) | (ud_end_2_1_q3 && !ud_end_2_0_q3) | (ud_end_2_1_q4 && !ud_end_2_0_q4) | (ud_end_2_1_q5 && !ud_end_2_0_q5) | (ud_end_2_1_q6 && !ud_end_2_0_q6);
+  wire [7:0] ud_finallll_mask = ud_finallll_right ? ud_2_6_1_best_mask : ud_2_6_0_best_mask;
+  wire ud_finalllr_q0 = ud_end_2_2_q0 || ud_end_2_3_q0;
+  wire ud_finalllr_q1 = ud_end_2_2_q1 || ud_end_2_3_q1;
+  wire ud_finalllr_q2 = ud_end_2_2_q2 || ud_end_2_3_q2;
+  wire ud_finalllr_q3 = ud_end_2_2_q3 || ud_end_2_3_q3;
+  wire ud_finalllr_q4 = ud_end_2_2_q4 || ud_end_2_3_q4;
+  wire ud_finalllr_q5 = ud_end_2_2_q5 || ud_end_2_3_q5;
+  wire ud_finalllr_q6 = ud_end_2_2_q6 || ud_end_2_3_q6;
+  wire ud_finalllr_right = (ud_end_2_3_q0 && !ud_end_2_2_q0) | (ud_end_2_3_q1 && !ud_end_2_2_q1) | (ud_end_2_3_q2 && !ud_end_2_2_q2) | (ud_end_2_3_q3 && !ud_end_2_2_q3) | (ud_end_2_3_q4 && !ud_end_2_2_q4) | (ud_end_2_3_q5 && !ud_end_2_2_q5) | (ud_end_2_3_q6 && !ud_end_2_2_q6);
+  wire [7:0] ud_finalllr_mask = ud_finalllr_right ? ud_2_6_3_best_mask : ud_2_6_2_best_mask;
+  wire ud_finalll_q0 = ud_finallll_q0 || ud_finalllr_q0;
+  wire ud_finalll_q1 = ud_finallll_q1 || ud_finalllr_q1;
+  wire ud_finalll_q2 = ud_finallll_q2 || ud_finalllr_q2;
+  wire ud_finalll_q3 = ud_finallll_q3 || ud_finalllr_q3;
+  wire ud_finalll_q4 = ud_finallll_q4 || ud_finalllr_q4;
+  wire ud_finalll_q5 = ud_finallll_q5 || ud_finalllr_q5;
+  wire ud_finalll_q6 = ud_finallll_q6 || ud_finalllr_q6;
+  wire ud_finalll_right = (ud_finalllr_q0 && !ud_finallll_q0) | (ud_finalllr_q1 && !ud_finallll_q1) | (ud_finalllr_q2 && !ud_finallll_q2) | (ud_finalllr_q3 && !ud_finallll_q3) | (ud_finalllr_q4 && !ud_finallll_q4) | (ud_finalllr_q5 && !ud_finallll_q5) | (ud_finalllr_q6 && !ud_finallll_q6);
+  wire [7:0] ud_finalll_mask = ud_finalll_right ? ud_finalllr_mask : ud_finallll_mask;
+  wire ud_finallrl_q0 = ud_end_2_4_q0 || ud_end_2_5_q0;
+  wire ud_finallrl_q1 = ud_end_2_4_q1 || ud_end_2_5_q1;
+  wire ud_finallrl_q2 = ud_end_2_4_q2 || ud_end_2_5_q2;
+  wire ud_finallrl_q3 = ud_end_2_4_q3 || ud_end_2_5_q3;
+  wire ud_finallrl_q4 = ud_end_2_4_q4 || ud_end_2_5_q4;
+  wire ud_finallrl_q5 = ud_end_2_4_q5 || ud_end_2_5_q5;
+  wire ud_finallrl_q6 = ud_end_2_4_q6 || ud_end_2_5_q6;
+  wire ud_finallrl_right = (ud_end_2_5_q0 && !ud_end_2_4_q0) | (ud_end_2_5_q1 && !ud_end_2_4_q1) | (ud_end_2_5_q2 && !ud_end_2_4_q2) | (ud_end_2_5_q3 && !ud_end_2_4_q3) | (ud_end_2_5_q4 && !ud_end_2_4_q4) | (ud_end_2_5_q5 && !ud_end_2_4_q5) | (ud_end_2_5_q6 && !ud_end_2_4_q6);
+  wire [7:0] ud_finallrl_mask = ud_finallrl_right ? ud_2_6_5_best_mask : ud_2_6_4_best_mask;
+  wire ud_finallrrr_q0 = ud_end_3_0_q0 || ud_end_3_1_q0;
+  wire ud_finallrrr_q1 = ud_end_3_0_q1 || ud_end_3_1_q1;
+  wire ud_finallrrr_q2 = ud_end_3_0_q2 || ud_end_3_1_q2;
+  wire ud_finallrrr_q3 = ud_end_3_0_q3 || ud_end_3_1_q3;
+  wire ud_finallrrr_q4 = ud_end_3_0_q4 || ud_end_3_1_q4;
+  wire ud_finallrrr_q5 = ud_end_3_0_q5 || ud_end_3_1_q5;
+  wire ud_finallrrr_q6 = ud_end_3_0_q6 || ud_end_3_1_q6;
+  wire ud_finallrrr_right = (ud_end_3_1_q0 && !ud_end_3_0_q0) | (ud_end_3_1_q1 && !ud_end_3_0_q1) | (ud_end_3_1_q2 && !ud_end_3_0_q2) | (ud_end_3_1_q3 && !ud_end_3_0_q3) | (ud_end_3_1_q4 && !ud_end_3_0_q4) | (ud_end_3_1_q5 && !ud_end_3_0_q5) | (ud_end_3_1_q6 && !ud_end_3_0_q6);
+  wire [7:0] ud_finallrrr_mask = ud_finallrrr_right ? ud_3_5_1_best_mask : ud_3_5_0_best_mask;
+  wire ud_finallrr_q0 = ud_end_2_6_q0 || ud_finallrrr_q0;
+  wire ud_finallrr_q1 = ud_end_2_6_q1 || ud_finallrrr_q1;
+  wire ud_finallrr_q2 = ud_end_2_6_q2 || ud_finallrrr_q2;
+  wire ud_finallrr_q3 = ud_end_2_6_q3 || ud_finallrrr_q3;
+  wire ud_finallrr_q4 = ud_end_2_6_q4 || ud_finallrrr_q4;
+  wire ud_finallrr_q5 = ud_end_2_6_q5 || ud_finallrrr_q5;
+  wire ud_finallrr_q6 = ud_end_2_6_q6 || ud_finallrrr_q6;
+  wire ud_finallrr_right = (ud_finallrrr_q0 && !ud_end_2_6_q0) | (ud_finallrrr_q1 && !ud_end_2_6_q1) | (ud_finallrrr_q2 && !ud_end_2_6_q2) | (ud_finallrrr_q3 && !ud_end_2_6_q3) | (ud_finallrrr_q4 && !ud_end_2_6_q4) | (ud_finallrrr_q5 && !ud_end_2_6_q5) | (ud_finallrrr_q6 && !ud_end_2_6_q6);
+  wire [7:0] ud_finallrr_mask = ud_finallrr_right ? ud_finallrrr_mask : ud_2_6_6_best_mask;
+  wire ud_finallr_q0 = ud_finallrl_q0 || ud_finallrr_q0;
+  wire ud_finallr_q1 = ud_finallrl_q1 || ud_finallrr_q1;
+  wire ud_finallr_q2 = ud_finallrl_q2 || ud_finallrr_q2;
+  wire ud_finallr_q3 = ud_finallrl_q3 || ud_finallrr_q3;
+  wire ud_finallr_q4 = ud_finallrl_q4 || ud_finallrr_q4;
+  wire ud_finallr_q5 = ud_finallrl_q5 || ud_finallrr_q5;
+  wire ud_finallr_q6 = ud_finallrl_q6 || ud_finallrr_q6;
+  wire ud_finallr_right = (ud_finallrr_q0 && !ud_finallrl_q0) | (ud_finallrr_q1 && !ud_finallrl_q1) | (ud_finallrr_q2 && !ud_finallrl_q2) | (ud_finallrr_q3 && !ud_finallrl_q3) | (ud_finallrr_q4 && !ud_finallrl_q4) | (ud_finallrr_q5 && !ud_finallrl_q5) | (ud_finallrr_q6 && !ud_finallrl_q6);
+  wire [7:0] ud_finallr_mask = ud_finallr_right ? ud_finallrr_mask : ud_finallrl_mask;
+  wire ud_finall_q0 = ud_finalll_q0 || ud_finallr_q0;
+  wire ud_finall_q1 = ud_finalll_q1 || ud_finallr_q1;
+  wire ud_finall_q2 = ud_finalll_q2 || ud_finallr_q2;
+  wire ud_finall_q3 = ud_finalll_q3 || ud_finallr_q3;
+  wire ud_finall_q4 = ud_finalll_q4 || ud_finallr_q4;
+  wire ud_finall_q5 = ud_finalll_q5 || ud_finallr_q5;
+  wire ud_finall_q6 = ud_finalll_q6 || ud_finallr_q6;
+  wire ud_finall_right = (ud_finallr_q0 && !ud_finalll_q0) | (ud_finallr_q1 && !ud_finalll_q1) | (ud_finallr_q2 && !ud_finalll_q2) | (ud_finallr_q3 && !ud_finalll_q3) | (ud_finallr_q4 && !ud_finalll_q4) | (ud_finallr_q5 && !ud_finalll_q5) | (ud_finallr_q6 && !ud_finalll_q6);
+  wire [7:0] ud_finall_mask = ud_finall_right ? ud_finallr_mask : ud_finalll_mask;
+  wire ud_finalrll_q0 = ud_end_3_2_q0 || ud_end_3_3_q0;
+  wire ud_finalrll_q1 = ud_end_3_2_q1 || ud_end_3_3_q1;
+  wire ud_finalrll_q2 = ud_end_3_2_q2 || ud_end_3_3_q2;
+  wire ud_finalrll_q3 = ud_end_3_2_q3 || ud_end_3_3_q3;
+  wire ud_finalrll_q4 = ud_end_3_2_q4 || ud_end_3_3_q4;
+  wire ud_finalrll_q5 = ud_end_3_2_q5 || ud_end_3_3_q5;
+  wire ud_finalrll_q6 = ud_end_3_2_q6 || ud_end_3_3_q6;
+  wire ud_finalrll_right = (ud_end_3_3_q0 && !ud_end_3_2_q0) | (ud_end_3_3_q1 && !ud_end_3_2_q1) | (ud_end_3_3_q2 && !ud_end_3_2_q2) | (ud_end_3_3_q3 && !ud_end_3_2_q3) | (ud_end_3_3_q4 && !ud_end_3_2_q4) | (ud_end_3_3_q5 && !ud_end_3_2_q5) | (ud_end_3_3_q6 && !ud_end_3_2_q6);
+  wire [7:0] ud_finalrll_mask = ud_finalrll_right ? ud_3_5_3_best_mask : ud_3_5_2_best_mask;
+  wire ud_finalrlr_q0 = ud_end_3_4_q0 || ud_end_3_5_q0;
+  wire ud_finalrlr_q1 = ud_end_3_4_q1 || ud_end_3_5_q1;
+  wire ud_finalrlr_q2 = ud_end_3_4_q2 || ud_end_3_5_q2;
+  wire ud_finalrlr_q3 = ud_end_3_4_q3 || ud_end_3_5_q3;
+  wire ud_finalrlr_q4 = ud_end_3_4_q4 || ud_end_3_5_q4;
+  wire ud_finalrlr_q5 = ud_end_3_4_q5 || ud_end_3_5_q5;
+  wire ud_finalrlr_q6 = ud_end_3_4_q6 || ud_end_3_5_q6;
+  wire ud_finalrlr_right = (ud_end_3_5_q0 && !ud_end_3_4_q0) | (ud_end_3_5_q1 && !ud_end_3_4_q1) | (ud_end_3_5_q2 && !ud_end_3_4_q2) | (ud_end_3_5_q3 && !ud_end_3_4_q3) | (ud_end_3_5_q4 && !ud_end_3_4_q4) | (ud_end_3_5_q5 && !ud_end_3_4_q5) | (ud_end_3_5_q6 && !ud_end_3_4_q6);
+  wire [7:0] ud_finalrlr_mask = ud_finalrlr_right ? ud_3_5_5_best_mask : ud_3_5_4_best_mask;
+  wire ud_finalrl_q0 = ud_finalrll_q0 || ud_finalrlr_q0;
+  wire ud_finalrl_q1 = ud_finalrll_q1 || ud_finalrlr_q1;
+  wire ud_finalrl_q2 = ud_finalrll_q2 || ud_finalrlr_q2;
+  wire ud_finalrl_q3 = ud_finalrll_q3 || ud_finalrlr_q3;
+  wire ud_finalrl_q4 = ud_finalrll_q4 || ud_finalrlr_q4;
+  wire ud_finalrl_q5 = ud_finalrll_q5 || ud_finalrlr_q5;
+  wire ud_finalrl_q6 = ud_finalrll_q6 || ud_finalrlr_q6;
+  wire ud_finalrl_right = (ud_finalrlr_q0 && !ud_finalrll_q0) | (ud_finalrlr_q1 && !ud_finalrll_q1) | (ud_finalrlr_q2 && !ud_finalrll_q2) | (ud_finalrlr_q3 && !ud_finalrll_q3) | (ud_finalrlr_q4 && !ud_finalrll_q4) | (ud_finalrlr_q5 && !ud_finalrll_q5) | (ud_finalrlr_q6 && !ud_finalrll_q6);
+  wire [7:0] ud_finalrl_mask = ud_finalrl_right ? ud_finalrlr_mask : ud_finalrll_mask;
+  wire ud_finalrrl_q0 = ud_end_4_0_q0 || ud_end_4_1_q0;
+  wire ud_finalrrl_q1 = ud_end_4_0_q1 || ud_end_4_1_q1;
+  wire ud_finalrrl_q2 = ud_end_4_0_q2 || ud_end_4_1_q2;
+  wire ud_finalrrl_q3 = ud_end_4_0_q3 || ud_end_4_1_q3;
+  wire ud_finalrrl_q4 = ud_end_4_0_q4 || ud_end_4_1_q4;
+  wire ud_finalrrl_q5 = ud_end_4_0_q5 || ud_end_4_1_q5;
+  wire ud_finalrrl_q6 = ud_end_4_0_q6 || ud_end_4_1_q6;
+  wire ud_finalrrl_right = (ud_end_4_1_q0 && !ud_end_4_0_q0) | (ud_end_4_1_q1 && !ud_end_4_0_q1) | (ud_end_4_1_q2 && !ud_end_4_0_q2) | (ud_end_4_1_q3 && !ud_end_4_0_q3) | (ud_end_4_1_q4 && !ud_end_4_0_q4) | (ud_end_4_1_q5 && !ud_end_4_0_q5) | (ud_end_4_1_q6 && !ud_end_4_0_q6);
+  wire [7:0] ud_finalrrl_mask = ud_finalrrl_right ? ud_4_4_1_best_mask : ud_4_4_0_best_mask;
+  wire ud_finalrrrr_q0 = ud_end_4_3_q0 || ud_end_4_4_q0;
+  wire ud_finalrrrr_q1 = ud_end_4_3_q1 || ud_end_4_4_q1;
+  wire ud_finalrrrr_q2 = ud_end_4_3_q2 || ud_end_4_4_q2;
+  wire ud_finalrrrr_q3 = ud_end_4_3_q3 || ud_end_4_4_q3;
+  wire ud_finalrrrr_q4 = ud_end_4_3_q4 || ud_end_4_4_q4;
+  wire ud_finalrrrr_q5 = ud_end_4_3_q5 || ud_end_4_4_q5;
+  wire ud_finalrrrr_q6 = ud_end_4_3_q6 || ud_end_4_4_q6;
+  wire ud_finalrrrr_right = (ud_end_4_4_q0 && !ud_end_4_3_q0) | (ud_end_4_4_q1 && !ud_end_4_3_q1) | (ud_end_4_4_q2 && !ud_end_4_3_q2) | (ud_end_4_4_q3 && !ud_end_4_3_q3) | (ud_end_4_4_q4 && !ud_end_4_3_q4) | (ud_end_4_4_q5 && !ud_end_4_3_q5) | (ud_end_4_4_q6 && !ud_end_4_3_q6);
+  wire [7:0] ud_finalrrrr_mask = ud_finalrrrr_right ? ud_4_4_4_best_mask : ud_4_4_3_best_mask;
+  wire ud_finalrrr_q0 = ud_end_4_2_q0 || ud_finalrrrr_q0;
+  wire ud_finalrrr_q1 = ud_end_4_2_q1 || ud_finalrrrr_q1;
+  wire ud_finalrrr_q2 = ud_end_4_2_q2 || ud_finalrrrr_q2;
+  wire ud_finalrrr_q3 = ud_end_4_2_q3 || ud_finalrrrr_q3;
+  wire ud_finalrrr_q4 = ud_end_4_2_q4 || ud_finalrrrr_q4;
+  wire ud_finalrrr_q5 = ud_end_4_2_q5 || ud_finalrrrr_q5;
+  wire ud_finalrrr_q6 = ud_end_4_2_q6 || ud_finalrrrr_q6;
+  wire ud_finalrrr_right = (ud_finalrrrr_q0 && !ud_end_4_2_q0) | (ud_finalrrrr_q1 && !ud_end_4_2_q1) | (ud_finalrrrr_q2 && !ud_end_4_2_q2) | (ud_finalrrrr_q3 && !ud_end_4_2_q3) | (ud_finalrrrr_q4 && !ud_end_4_2_q4) | (ud_finalrrrr_q5 && !ud_end_4_2_q5) | (ud_finalrrrr_q6 && !ud_end_4_2_q6);
+  wire [7:0] ud_finalrrr_mask = ud_finalrrr_right ? ud_finalrrrr_mask : ud_4_4_2_best_mask;
+  wire ud_finalrr_q0 = ud_finalrrl_q0 || ud_finalrrr_q0;
+  wire ud_finalrr_q1 = ud_finalrrl_q1 || ud_finalrrr_q1;
+  wire ud_finalrr_q2 = ud_finalrrl_q2 || ud_finalrrr_q2;
+  wire ud_finalrr_q3 = ud_finalrrl_q3 || ud_finalrrr_q3;
+  wire ud_finalrr_q4 = ud_finalrrl_q4 || ud_finalrrr_q4;
+  wire ud_finalrr_q5 = ud_finalrrl_q5 || ud_finalrrr_q5;
+  wire ud_finalrr_q6 = ud_finalrrl_q6 || ud_finalrrr_q6;
+  wire ud_finalrr_right = (ud_finalrrr_q0 && !ud_finalrrl_q0) | (ud_finalrrr_q1 && !ud_finalrrl_q1) | (ud_finalrrr_q2 && !ud_finalrrl_q2) | (ud_finalrrr_q3 && !ud_finalrrl_q3) | (ud_finalrrr_q4 && !ud_finalrrl_q4) | (ud_finalrrr_q5 && !ud_finalrrl_q5) | (ud_finalrrr_q6 && !ud_finalrrl_q6);
+  wire [7:0] ud_finalrr_mask = ud_finalrr_right ? ud_finalrrr_mask : ud_finalrrl_mask;
+  wire ud_finalr_q0 = ud_finalrl_q0 || ud_finalrr_q0;
+  wire ud_finalr_q1 = ud_finalrl_q1 || ud_finalrr_q1;
+  wire ud_finalr_q2 = ud_finalrl_q2 || ud_finalrr_q2;
+  wire ud_finalr_q3 = ud_finalrl_q3 || ud_finalrr_q3;
+  wire ud_finalr_q4 = ud_finalrl_q4 || ud_finalrr_q4;
+  wire ud_finalr_q5 = ud_finalrl_q5 || ud_finalrr_q5;
+  wire ud_finalr_q6 = ud_finalrl_q6 || ud_finalrr_q6;
+  wire ud_finalr_right = (ud_finalrr_q0 && !ud_finalrl_q0) | (ud_finalrr_q1 && !ud_finalrl_q1) | (ud_finalrr_q2 && !ud_finalrl_q2) | (ud_finalrr_q3 && !ud_finalrl_q3) | (ud_finalrr_q4 && !ud_finalrl_q4) | (ud_finalrr_q5 && !ud_finalrl_q5) | (ud_finalrr_q6 && !ud_finalrl_q6);
+  wire [7:0] ud_finalr_mask = ud_finalr_right ? ud_finalrr_mask : ud_finalrl_mask;
+  wire ud_final_q0 = ud_finall_q0 || ud_finalr_q0;
+  wire ud_final_q1 = ud_finall_q1 || ud_finalr_q1;
+  wire ud_final_q2 = ud_finall_q2 || ud_finalr_q2;
+  wire ud_final_q3 = ud_finall_q3 || ud_finalr_q3;
+  wire ud_final_q4 = ud_finall_q4 || ud_finalr_q4;
+  wire ud_final_q5 = ud_finall_q5 || ud_finalr_q5;
+  wire ud_final_q6 = ud_finall_q6 || ud_finalr_q6;
+  wire ud_final_right = (ud_finalr_q0 && !ud_finall_q0) | (ud_finalr_q1 && !ud_finall_q1) | (ud_finalr_q2 && !ud_finall_q2) | (ud_finalr_q3 && !ud_finall_q3) | (ud_finalr_q4 && !ud_finall_q4) | (ud_finalr_q5 && !ud_finall_q5) | (ud_finalr_q6 && !ud_finall_q6);
+  wire [7:0] ud_final_mask = ud_final_right ? ud_finalr_mask : ud_finall_mask;
+//
+// THERMOMETER SCORE TO COMPLETION
+// Decode the index of the first feasible threshold and add the common base.
+// Monotonicity makes the explicit bit equations a small priority encoder.
+// If all bits were zero it would encode 7; a legal two-chain input always
+// has a feasible optimum within the retained thresholds.
+//
+  wire [2:0] ud_extra = {!ud_final_q3, ((!ud_final_q1 && ud_final_q3) || !ud_final_q5), ((!ud_final_q0 && ud_final_q1) || (!ud_final_q2 && ud_final_q3) || (!ud_final_q4 && ud_final_q5) || !ud_final_q6)};
+  wire [8:0] dual_cost = ud_total_base + {6'd0, ud_extra};
+  wire [7:0] dual_mask = ud_final_mask;
+//
+// SINGLE-CHAIN OFFSET ENGINE (ALSO HANDLES AN EMPTY GRAPH)
+// A contains the ordered dependency chain; B holds independent instructions
+// sorted by descending latency. For a fixed initial chain offset, issue A
+// without internal idle time and place B in the available issue slots.
+// An optimum exists in this form: shifting avoidable chain waiting to the
+// initial offset exposes earlier slots for independent work. Search the
+// bounded initial offset rather than all placements of independent entries.
+//
+wire sc_active_0;
+assign sc_active_0 = count_a > 4'd0;
+wire sc_active_1;
+assign sc_active_1 = count_a > 4'd1;
+wire sc_active_2;
+assign sc_active_2 = count_a > 4'd2;
+wire sc_active_3;
+assign sc_active_3 = count_a > 4'd3;
+wire sc_active_4;
+assign sc_active_4 = count_a > 4'd4;
+wire sc_active_5;
+assign sc_active_5 = count_a > 4'd5;
+wire sc_active_6;
+assign sc_active_6 = count_a > 4'd6;
+wire sc_active_7;
+assign sc_active_7 = count_a > 4'd7;
+wire sc_independent_0;
+assign sc_independent_0 = count_a < 4'd8;
+wire sc_independent_1;
+assign sc_independent_1 = count_a < 4'd7;
+wire sc_independent_2;
+assign sc_independent_2 = count_a < 4'd6;
+wire sc_independent_3;
+assign sc_independent_3 = count_a < 4'd5;
+wire sc_independent_4;
+assign sc_independent_4 = count_a < 4'd4;
+wire sc_independent_5;
+assign sc_independent_5 = count_a < 4'd3;
+//
+// AVAILABLE SLOTS BEFORE EACH CHAIN ENTRY
+// Before chain entry i, PA[i]-i is the number of issue slots not consumed
+// by the first i chain instructions in its no-idle schedule. Clamp it at 7:
+// no placement decision among eight instructions needs a larger count.
+// A latency with any high bit set already contributes at least seven spare
+// cycles; otherwise small balanced low-bit sums give the exact excess.
+//
+wire [2:0] sc_excess_0;
+assign sc_excess_0 = 3'd0;
+wire [2:0] sc_excess_1;
+assign sc_excess_1 = ((|a_lat[0][5:3])) ? 3'd7 : (a_lat[0][2:0] - 3'd1);
+wire [3:0] sc_pre_0_2;
+assign sc_pre_0_2 = {1'd0, a_lat[0][2:0]} + {1'd0, a_lat[1][2:0]};
+wire [2:0] sc_excess_2;
+assign sc_excess_2 = ((|a_lat[0][5:3]) || (|a_lat[1][5:3]) || (sc_pre_0_2 >= 4'd9)) ? 3'd7 : (sc_pre_0_2[2:0] - 3'd2);
+wire [4:0] sc_pre_0_3;
+assign sc_pre_0_3 = {1'd0, sc_pre_0_2} + {2'd0, a_lat[2][2:0]};
+wire [2:0] sc_excess_3;
+assign sc_excess_3 = ((|a_lat[0][5:3]) || (|a_lat[1][5:3]) || (|a_lat[2][5:3]) || (sc_pre_0_3 >= 5'd10)) ? 3'd7 : (sc_pre_0_3[2:0] - 3'd3);
+wire [3:0] sc_pre_2_2;
+assign sc_pre_2_2 = {1'd0, a_lat[2][2:0]} + {1'd0, a_lat[3][2:0]};
+wire [4:0] sc_pre_0_4;
+assign sc_pre_0_4 = {1'd0, sc_pre_0_2} + {1'd0, sc_pre_2_2};
+wire [2:0] sc_excess_4;
+assign sc_excess_4 = ((|a_lat[0][5:3]) || (|a_lat[1][5:3]) || (|a_lat[2][5:3]) || (|a_lat[3][5:3]) || (sc_pre_0_4 >= 5'd11)) ? 3'd7 : (sc_pre_0_4[2:0] - 3'd4);
+wire [5:0] sc_pre_0_5;
+assign sc_pre_0_5 = {1'd0, sc_pre_0_4} + {3'd0, a_lat[4][2:0]};
+wire [2:0] sc_excess_5;
+assign sc_excess_5 = ((|a_lat[0][5:3]) || (|a_lat[1][5:3]) || (|a_lat[2][5:3]) || (|a_lat[3][5:3]) || (|a_lat[4][5:3]) || (sc_pre_0_5 >= 6'd12)) ? 3'd7 : (sc_pre_0_5[2:0] - 3'd5);
+wire [3:0] sc_pre_4_2;
+assign sc_pre_4_2 = {1'd0, a_lat[4][2:0]} + {1'd0, a_lat[5][2:0]};
+wire [5:0] sc_pre_0_6;
+assign sc_pre_0_6 = {1'd0, sc_pre_0_4} + {2'd0, sc_pre_4_2};
+wire [2:0] sc_excess_6;
+assign sc_excess_6 = ((|a_lat[0][5:3]) || (|a_lat[1][5:3]) || (|a_lat[2][5:3]) || (|a_lat[3][5:3]) || (|a_lat[4][5:3]) || (|a_lat[5][5:3]) || (sc_pre_0_6 >= 6'd13)) ? 3'd7 : (sc_pre_0_6[2:0] - 3'd6);
+wire [4:0] sc_pre_4_3;
+assign sc_pre_4_3 = {1'd0, sc_pre_4_2} + {2'd0, a_lat[6][2:0]};
+wire [5:0] sc_pre_0_7;
+assign sc_pre_0_7 = {1'd0, sc_pre_0_4} + {1'd0, sc_pre_4_3};
+wire [2:0] sc_excess_7;
+assign sc_excess_7 = ((|a_lat[0][5:3]) || (|a_lat[1][5:3]) || (|a_lat[2][5:3]) || (|a_lat[3][5:3]) || (|a_lat[4][5:3]) || (|a_lat[5][5:3]) || (|a_lat[6][5:3]) || (sc_pre_0_7 >= 6'd14)) ? 3'd7 : (sc_pre_0_7[2:0] - 3'd7);
+//
+// INDEPENDENT ISSUE TIMES AT ZERO CHAIN OFFSET
+// For independent rank t, count active chain entries whose excess is <=t.
+// Those entries occupy issue positions before this independent instruction.
+// Its earliest available time is t plus that count. Excess is monotone,
+// allowing the hit vector to use a small thermometer-to-binary encoder.
+//
+wire sc_hit_0_1;
+assign sc_hit_0_1 = sc_active_1 && (sc_excess_1 <= 3'd0);
+wire sc_hit_0_2;
+assign sc_hit_0_2 = sc_active_2 && (sc_excess_2 <= 3'd0);
+wire sc_hit_0_3;
+assign sc_hit_0_3 = sc_active_3 && (sc_excess_3 <= 3'd0);
+wire sc_hit_0_4;
+assign sc_hit_0_4 = sc_active_4 && (sc_excess_4 <= 3'd0);
+wire sc_hit_0_5;
+assign sc_hit_0_5 = sc_active_5 && (sc_excess_5 <= 3'd0);
+wire sc_hit_0_6;
+assign sc_hit_0_6 = sc_active_6 && (sc_excess_6 <= 3'd0);
+wire [2:0] sc_count_0;
+assign sc_count_0 = {sc_hit_0_3, ((sc_hit_0_1 && !sc_hit_0_3) || sc_hit_0_5), ((sc_active_0 && !sc_hit_0_1) || (sc_hit_0_2 && !sc_hit_0_3) || (sc_hit_0_4 && !sc_hit_0_5) || sc_hit_0_6)};
+wire [2:0] sc_start_0;
+assign sc_start_0 = 3'd0 + sc_count_0;
+wire sc_hit_1_1;
+assign sc_hit_1_1 = sc_active_1 && (sc_excess_1 <= 3'd1);
+wire sc_hit_1_2;
+assign sc_hit_1_2 = sc_active_2 && (sc_excess_2 <= 3'd1);
+wire sc_hit_1_3;
+assign sc_hit_1_3 = sc_active_3 && (sc_excess_3 <= 3'd1);
+wire sc_hit_1_4;
+assign sc_hit_1_4 = sc_active_4 && (sc_excess_4 <= 3'd1);
+wire sc_hit_1_5;
+assign sc_hit_1_5 = sc_active_5 && (sc_excess_5 <= 3'd1);
+wire sc_hit_1_6;
+assign sc_hit_1_6 = sc_active_6 && (sc_excess_6 <= 3'd1);
+wire [2:0] sc_count_1;
+assign sc_count_1 = {sc_hit_1_3, ((sc_hit_1_1 && !sc_hit_1_3) || sc_hit_1_5), ((sc_active_0 && !sc_hit_1_1) || (sc_hit_1_2 && !sc_hit_1_3) || (sc_hit_1_4 && !sc_hit_1_5) || sc_hit_1_6)};
+wire [2:0] sc_start_1;
+assign sc_start_1 = 3'd1 + sc_count_1;
+wire sc_hit_2_1;
+assign sc_hit_2_1 = sc_active_1 && (sc_excess_1 <= 3'd2);
+wire sc_hit_2_2;
+assign sc_hit_2_2 = sc_active_2 && (sc_excess_2 <= 3'd2);
+wire sc_hit_2_3;
+assign sc_hit_2_3 = sc_active_3 && (sc_excess_3 <= 3'd2);
+wire sc_hit_2_4;
+assign sc_hit_2_4 = sc_active_4 && (sc_excess_4 <= 3'd2);
+wire sc_hit_2_5;
+assign sc_hit_2_5 = sc_active_5 && (sc_excess_5 <= 3'd2);
+wire sc_hit_2_6;
+assign sc_hit_2_6 = sc_active_6 && (sc_excess_6 <= 3'd2);
+wire [2:0] sc_count_2;
+assign sc_count_2 = {sc_hit_2_3, ((sc_hit_2_1 && !sc_hit_2_3) || sc_hit_2_5), ((sc_active_0 && !sc_hit_2_1) || (sc_hit_2_2 && !sc_hit_2_3) || (sc_hit_2_4 && !sc_hit_2_5) || sc_hit_2_6)};
+wire [2:0] sc_start_2;
+assign sc_start_2 = 3'd2 + sc_count_2;
+wire sc_hit_3_1;
+assign sc_hit_3_1 = sc_active_1 && (sc_excess_1 <= 3'd3);
+wire sc_hit_3_2;
+assign sc_hit_3_2 = sc_active_2 && (sc_excess_2 <= 3'd3);
+wire sc_hit_3_3;
+assign sc_hit_3_3 = sc_active_3 && (sc_excess_3 <= 3'd3);
+wire sc_hit_3_4;
+assign sc_hit_3_4 = sc_active_4 && (sc_excess_4 <= 3'd3);
+wire sc_hit_3_5;
+assign sc_hit_3_5 = sc_active_5 && (sc_excess_5 <= 3'd3);
+wire sc_hit_3_6;
+assign sc_hit_3_6 = sc_active_6 && (sc_excess_6 <= 3'd3);
+wire [2:0] sc_count_3;
+assign sc_count_3 = {sc_hit_3_3, ((sc_hit_3_1 && !sc_hit_3_3) || sc_hit_3_5), ((sc_active_0 && !sc_hit_3_1) || (sc_hit_3_2 && !sc_hit_3_3) || (sc_hit_3_4 && !sc_hit_3_5) || sc_hit_3_6)};
+wire [2:0] sc_start_3;
+assign sc_start_3 = 3'd3 + sc_count_3;
+wire sc_hit_4_1;
+assign sc_hit_4_1 = sc_active_1 && (sc_excess_1 <= 3'd4);
+wire sc_hit_4_2;
+assign sc_hit_4_2 = sc_active_2 && (sc_excess_2 <= 3'd4);
+wire sc_hit_4_3;
+assign sc_hit_4_3 = sc_active_3 && (sc_excess_3 <= 3'd4);
+wire sc_hit_4_4;
+assign sc_hit_4_4 = sc_active_4 && (sc_excess_4 <= 3'd4);
+wire sc_hit_4_5;
+assign sc_hit_4_5 = sc_active_5 && (sc_excess_5 <= 3'd4);
+wire sc_hit_4_6;
+assign sc_hit_4_6 = sc_active_6 && (sc_excess_6 <= 3'd4);
+wire [2:0] sc_count_4;
+assign sc_count_4 = {sc_hit_4_3, ((sc_hit_4_1 && !sc_hit_4_3) || sc_hit_4_5), ((sc_active_0 && !sc_hit_4_1) || (sc_hit_4_2 && !sc_hit_4_3) || (sc_hit_4_4 && !sc_hit_4_5) || sc_hit_4_6)};
+wire [2:0] sc_start_4;
+assign sc_start_4 = 3'd4 + sc_count_4;
+wire sc_hit_5_1;
+assign sc_hit_5_1 = sc_active_1 && (sc_excess_1 <= 3'd5);
+wire sc_hit_5_2;
+assign sc_hit_5_2 = sc_active_2 && (sc_excess_2 <= 3'd5);
+wire sc_hit_5_3;
+assign sc_hit_5_3 = sc_active_3 && (sc_excess_3 <= 3'd5);
+wire sc_hit_5_4;
+assign sc_hit_5_4 = sc_active_4 && (sc_excess_4 <= 3'd5);
+wire sc_hit_5_5;
+assign sc_hit_5_5 = sc_active_5 && (sc_excess_5 <= 3'd5);
+wire sc_hit_5_6;
+assign sc_hit_5_6 = sc_active_6 && (sc_excess_6 <= 3'd5);
+wire [2:0] sc_count_5;
+assign sc_count_5 = {sc_hit_5_3, ((sc_hit_5_1 && !sc_hit_5_3) || sc_hit_5_5), ((sc_active_0 && !sc_hit_5_1) || (sc_hit_5_2 && !sc_hit_5_3) || (sc_hit_5_4 && !sc_hit_5_5) || sc_hit_5_6)};
+wire [2:0] sc_start_5;
+assign sc_start_5 = 3'd5 + sc_count_5;
+//
+// SHARED SINGLE-CHAIN TOTAL
+// Only sum A slots 4..7 here, then add ud_pa_4, which already covers 0..3.
+// This reuse avoids three duplicated adders. In single-chain cases A
+// can have up to eight entries; unused slots are zero. Do not replace the
+// full chain total with the four-entry dual-engine prefix alone.
+//
+wire [6:0] sc_pair_2;
+assign sc_pair_2 = {1'b0, a_lat[4]} + {1'b0, a_lat[5]};
+wire [6:0] sc_pair_3;
+assign sc_pair_3 = {1'b0, a_lat[6]} + {1'b0, a_lat[7]};
+wire [7:0] sc_quad_1;
+assign sc_quad_1 = {1'b0, sc_pair_2} + {1'b0, sc_pair_3};
+wire [8:0] sc_total;
+assign sc_total = ud_pa_4 + {1'b0, sc_quad_1};
+//
+// SMALL DEFICIT TESTS
+// An independent latency Bj fits before chain completion at a relative
+// issue time s when SA-Bj >= s. Only the sign and small differences matter.
+// sc_negative and sc_small inspect high total bits as well as a seven-bit
+// subtraction, avoiding a false result from truncating a large chain total.
+//
+wire [6:0] sc_diff_0;
+assign sc_diff_0 = {1'b0, sc_total[5:0]} - {1'b0, b_lat[0]};
+wire sc_negative_0;
+assign sc_negative_0 = !(|sc_total[8:6]) && sc_diff_0[6];
+wire sc_small_0;
+assign sc_small_0 = !(|sc_total[8:7]) && (sc_total[6] == sc_diff_0[6]) && !(|sc_diff_0[5:3]);
+wire [6:0] sc_diff_1;
+assign sc_diff_1 = {1'b0, sc_total[5:0]} - {1'b0, b_lat[1]};
+wire sc_negative_1;
+assign sc_negative_1 = !(|sc_total[8:6]) && sc_diff_1[6];
+wire sc_small_1;
+assign sc_small_1 = !(|sc_total[8:7]) && (sc_total[6] == sc_diff_1[6]) && !(|sc_diff_1[5:3]);
+wire [6:0] sc_diff_2;
+assign sc_diff_2 = {1'b0, sc_total[5:0]} - {1'b0, b_lat[2]};
+wire sc_negative_2;
+assign sc_negative_2 = !(|sc_total[8:6]) && sc_diff_2[6];
+wire sc_small_2;
+assign sc_small_2 = !(|sc_total[8:7]) && (sc_total[6] == sc_diff_2[6]) && !(|sc_diff_2[5:3]);
+wire [6:0] sc_diff_3;
+assign sc_diff_3 = {1'b0, sc_total[5:0]} - {1'b0, b_lat[3]};
+wire sc_negative_3;
+assign sc_negative_3 = !(|sc_total[8:6]) && sc_diff_3[6];
+wire sc_small_3;
+assign sc_small_3 = !(|sc_total[8:7]) && (sc_total[6] == sc_diff_3[6]) && !(|sc_diff_3[5:3]);
+wire [6:0] sc_diff_4;
+assign sc_diff_4 = {1'b0, sc_total[5:0]} - {1'b0, b_lat[4]};
+wire sc_negative_4;
+assign sc_negative_4 = !(|sc_total[8:6]) && sc_diff_4[6];
+wire sc_small_4;
+assign sc_small_4 = !(|sc_total[8:7]) && (sc_total[6] == sc_diff_4[6]) && !(|sc_diff_4[5:3]);
+wire [6:0] sc_diff_5;
+assign sc_diff_5 = {1'b0, sc_total[5:0]} - {1'b0, b_lat[5]};
+wire sc_negative_5;
+assign sc_negative_5 = !(|sc_total[8:6]) && sc_diff_5[6];
+wire sc_small_5;
+assign sc_small_5 = !(|sc_total[8:7]) && (sc_total[6] == sc_diff_5[6]) && !(|sc_diff_5[5:3]);
+//
+// PARALLEL INITIAL-OFFSET FEASIBILITY
+// With chain offset d, the first d independent entries issue before A.
+// For j>=d the remaining issue time is d + sc_start_(j-d), so fitting
+// before SA+d reduces to SA-Bj >= sc_start_(j-d); d cancels.
+// sc_bad_d ORs failures for that suffix. A nonempty dependency chain has
+// at least two entries, hence at most six independent entries and offsets
+// 0..6 suffice. The all-independent case is handled by the maximum below.
+//
+wire sc_late_0_0;
+assign sc_late_0_0 = sc_independent_0 && (sc_negative_0 || (sc_small_0 && (sc_diff_0[2:0] < sc_start_0)));
+wire sc_late_0_1;
+assign sc_late_0_1 = sc_independent_1 && (sc_negative_1 || (sc_small_1 && (sc_diff_1[2:0] < sc_start_1)));
+wire sc_late_0_2;
+assign sc_late_0_2 = sc_independent_2 && (sc_negative_2 || (sc_small_2 && (sc_diff_2[2:0] < sc_start_2)));
+wire sc_late_0_3;
+assign sc_late_0_3 = sc_independent_3 && (sc_negative_3 || (sc_small_3 && (sc_diff_3[2:0] < sc_start_3)));
+wire sc_late_0_4;
+assign sc_late_0_4 = sc_independent_4 && (sc_negative_4 || (sc_small_4 && (sc_diff_4[2:0] < sc_start_4)));
+wire sc_late_0_5;
+assign sc_late_0_5 = sc_independent_5 && (sc_negative_5 || (sc_small_5 && (sc_diff_5[2:0] < sc_start_5)));
+wire sc_bad_0;
+assign sc_bad_0 = sc_late_0_0 | sc_late_0_1 | sc_late_0_2 | sc_late_0_3 | sc_late_0_4 | sc_late_0_5;
+wire sc_late_1_1;
+assign sc_late_1_1 = sc_independent_1 && (sc_negative_1 || (sc_small_1 && (sc_diff_1[2:0] < sc_start_0)));
+wire sc_late_1_2;
+assign sc_late_1_2 = sc_independent_2 && (sc_negative_2 || (sc_small_2 && (sc_diff_2[2:0] < sc_start_1)));
+wire sc_late_1_3;
+assign sc_late_1_3 = sc_independent_3 && (sc_negative_3 || (sc_small_3 && (sc_diff_3[2:0] < sc_start_2)));
+wire sc_late_1_4;
+assign sc_late_1_4 = sc_independent_4 && (sc_negative_4 || (sc_small_4 && (sc_diff_4[2:0] < sc_start_3)));
+wire sc_late_1_5;
+assign sc_late_1_5 = sc_independent_5 && (sc_negative_5 || (sc_small_5 && (sc_diff_5[2:0] < sc_start_4)));
+wire sc_bad_1;
+assign sc_bad_1 = sc_late_1_1 | sc_late_1_2 | sc_late_1_3 | sc_late_1_4 | sc_late_1_5;
+wire sc_late_2_2;
+assign sc_late_2_2 = sc_independent_2 && (sc_negative_2 || (sc_small_2 && (sc_diff_2[2:0] < sc_start_0)));
+wire sc_late_2_3;
+assign sc_late_2_3 = sc_independent_3 && (sc_negative_3 || (sc_small_3 && (sc_diff_3[2:0] < sc_start_1)));
+wire sc_late_2_4;
+assign sc_late_2_4 = sc_independent_4 && (sc_negative_4 || (sc_small_4 && (sc_diff_4[2:0] < sc_start_2)));
+wire sc_late_2_5;
+assign sc_late_2_5 = sc_independent_5 && (sc_negative_5 || (sc_small_5 && (sc_diff_5[2:0] < sc_start_3)));
+wire sc_bad_2;
+assign sc_bad_2 = sc_late_2_2 | sc_late_2_3 | sc_late_2_4 | sc_late_2_5;
+wire sc_late_3_3;
+assign sc_late_3_3 = sc_independent_3 && (sc_negative_3 || (sc_small_3 && (sc_diff_3[2:0] < sc_start_0)));
+wire sc_late_3_4;
+assign sc_late_3_4 = sc_independent_4 && (sc_negative_4 || (sc_small_4 && (sc_diff_4[2:0] < sc_start_1)));
+wire sc_late_3_5;
+assign sc_late_3_5 = sc_independent_5 && (sc_negative_5 || (sc_small_5 && (sc_diff_5[2:0] < sc_start_2)));
+wire sc_bad_3;
+assign sc_bad_3 = sc_late_3_3 | sc_late_3_4 | sc_late_3_5;
+wire sc_late_4_4;
+assign sc_late_4_4 = sc_independent_4 && (sc_negative_4 || (sc_small_4 && (sc_diff_4[2:0] < sc_start_0)));
+wire sc_late_4_5;
+assign sc_late_4_5 = sc_independent_5 && (sc_negative_5 || (sc_small_5 && (sc_diff_5[2:0] < sc_start_1)));
+wire sc_bad_4;
+assign sc_bad_4 = sc_late_4_4 | sc_late_4_5;
+wire sc_late_5_5;
+assign sc_late_5_5 = sc_independent_5 && (sc_negative_5 || (sc_small_5 && (sc_diff_5[2:0] < sc_start_0)));
+wire sc_bad_5;
+assign sc_bad_5 = sc_late_5_5;
+//
+// FIRST FEASIBLE OFFSET
+// The bad-offset flags form a monotone prefix. Encode the first good offset;
+// all six bad flags mean offset 6. Independent work already issued before
+// the chain is accounted for by the independent completion lower bound.
+//
+wire [2:0] sc_offset;
+assign sc_offset = {sc_bad_3, ((sc_bad_1 && !sc_bad_3) || sc_bad_5), ((sc_bad_0 && !sc_bad_1) || (sc_bad_2 && !sc_bad_3) || (sc_bad_4 && !sc_bad_5))};
+wire [8:0] sc_chain;
+assign sc_chain = sc_total + {6'd0, sc_offset};
+//
+// INDEPENDENT COMPLETION LOWER BOUND
+// With B in descending latency order, independent rank j cannot issue before
+// j, giving max_j(j+Bj). Take the maximum of this bound and SA+offset.
+// The chosen offset construction attains that maximum. If there is no
+// chain, it reduces to the ordinary descending-latency independent schedule.
+//
+wire [6:0] sc_base_0;
+assign sc_base_0 = {1'b0, b_lat[0]} + 7'd0;
+wire [6:0] sc_base_1;
+assign sc_base_1 = {1'b0, b_lat[1]} + 7'd1;
+wire [6:0] sc_base_2;
+assign sc_base_2 = {1'b0, b_lat[2]} + 7'd2;
+wire [6:0] sc_base_3;
+assign sc_base_3 = {1'b0, b_lat[3]} + 7'd3;
+wire [6:0] sc_base_4;
+assign sc_base_4 = {1'b0, b_lat[4]} + 7'd4;
+wire [6:0] sc_base_5;
+assign sc_base_5 = {1'b0, b_lat[5]} + 7'd5;
+wire [6:0] sc_base_6;
+assign sc_base_6 = {1'b0, b_lat[6]} + 7'd6;
+wire [6:0] sc_base_7;
+assign sc_base_7 = {1'b0, b_lat[7]} + 7'd7;
+wire [6:0] sc_peak_1;
+assign sc_peak_1 = (sc_base_0 >= sc_base_1) ? sc_base_0 : sc_base_1;
+wire [6:0] sc_peak_2;
+assign sc_peak_2 = (sc_base_2 >= sc_base_3) ? sc_base_2 : sc_base_3;
+wire [6:0] sc_peak_3;
+assign sc_peak_3 = (sc_peak_1 >= sc_peak_2) ? sc_peak_1 : sc_peak_2;
+wire [6:0] sc_peak_4;
+assign sc_peak_4 = (sc_base_4 >= sc_base_5) ? sc_base_4 : sc_base_5;
+wire [6:0] sc_peak_5;
+assign sc_peak_5 = (sc_base_6 >= sc_base_7) ? sc_base_6 : sc_base_7;
+wire [6:0] sc_peak_6;
+assign sc_peak_6 = (sc_peak_4 >= sc_peak_5) ? sc_peak_4 : sc_peak_5;
+wire [6:0] sc_peak_7;
+assign sc_peak_7 = (sc_peak_3 >= sc_peak_6) ? sc_peak_3 : sc_peak_6;
+wire [8:0] single_cost;
+assign single_cost = (sc_chain >= {2'd0, sc_peak_7}) ? sc_chain : {2'd0, sc_peak_7};
+//
+// SINGLE-CHAIN WITNESS
+// Chain entry i occupies issue-order position i+min(offset+excess[i],k),
+// where k=8-count_a is the number of independent entries. OR its one-hot
+// position into the A mask. This position counts issued instructions, not
+// elapsed execution cycles. k is stored modulo eight; when count_a=0 every
+// chain entry is inactive, so the wrapped zero cannot affect the mask.
+//
+wire [2:0] sc_singles;
+assign sc_singles = 3'd0 - count_a[2:0];
+wire [3:0] sc_waited_0;
+assign sc_waited_0 = {1'b0, sc_offset} + {1'b0, sc_excess_0};
+wire [2:0] sc_gap_0;
+assign sc_gap_0 = (sc_waited_0 >= {1'b0, sc_singles}) ? sc_singles : sc_waited_0[2:0];
+wire [2:0] sc_rank_0;
+assign sc_rank_0 = 3'd0 + sc_gap_0;
+wire [7:0] sc_mask_0;
+assign sc_mask_0 = sc_active_0 ? (8'b00000001 << sc_rank_0) : 8'd0;
+wire [3:0] sc_waited_1;
+assign sc_waited_1 = {1'b0, sc_offset} + {1'b0, sc_excess_1};
+wire [2:0] sc_gap_1;
+assign sc_gap_1 = (sc_waited_1 >= {1'b0, sc_singles}) ? sc_singles : sc_waited_1[2:0];
+wire [2:0] sc_rank_1;
+assign sc_rank_1 = 3'd1 + sc_gap_1;
+wire [7:0] sc_mask_1;
+assign sc_mask_1 = sc_active_1 ? (8'b00000001 << sc_rank_1) : 8'd0;
+wire [3:0] sc_waited_2;
+assign sc_waited_2 = {1'b0, sc_offset} + {1'b0, sc_excess_2};
+wire [2:0] sc_gap_2;
+assign sc_gap_2 = (sc_waited_2 >= {1'b0, sc_singles}) ? sc_singles : sc_waited_2[2:0];
+wire [2:0] sc_rank_2;
+assign sc_rank_2 = 3'd2 + sc_gap_2;
+wire [7:0] sc_mask_2;
+assign sc_mask_2 = sc_active_2 ? (8'b00000001 << sc_rank_2) : 8'd0;
+wire [3:0] sc_waited_3;
+assign sc_waited_3 = {1'b0, sc_offset} + {1'b0, sc_excess_3};
+wire [2:0] sc_gap_3;
+assign sc_gap_3 = (sc_waited_3 >= {1'b0, sc_singles}) ? sc_singles : sc_waited_3[2:0];
+wire [2:0] sc_rank_3;
+assign sc_rank_3 = 3'd3 + sc_gap_3;
+wire [7:0] sc_mask_3;
+assign sc_mask_3 = sc_active_3 ? (8'b00000001 << sc_rank_3) : 8'd0;
+wire [3:0] sc_waited_4;
+assign sc_waited_4 = {1'b0, sc_offset} + {1'b0, sc_excess_4};
+wire [2:0] sc_gap_4;
+assign sc_gap_4 = (sc_waited_4 >= {1'b0, sc_singles}) ? sc_singles : sc_waited_4[2:0];
+wire [2:0] sc_rank_4;
+assign sc_rank_4 = 3'd4 + sc_gap_4;
+wire [7:0] sc_mask_4;
+assign sc_mask_4 = sc_active_4 ? (8'b00000001 << sc_rank_4) : 8'd0;
+wire [3:0] sc_waited_5;
+assign sc_waited_5 = {1'b0, sc_offset} + {1'b0, sc_excess_5};
+wire [2:0] sc_gap_5;
+assign sc_gap_5 = (sc_waited_5 >= {1'b0, sc_singles}) ? sc_singles : sc_waited_5[2:0];
+wire [2:0] sc_rank_5;
+assign sc_rank_5 = 3'd5 + sc_gap_5;
+wire [7:0] sc_mask_5;
+assign sc_mask_5 = sc_active_5 ? (8'b00000001 << sc_rank_5) : 8'd0;
+wire [3:0] sc_waited_6;
+assign sc_waited_6 = {1'b0, sc_offset} + {1'b0, sc_excess_6};
+wire [2:0] sc_gap_6;
+assign sc_gap_6 = (sc_waited_6 >= {1'b0, sc_singles}) ? sc_singles : sc_waited_6[2:0];
+wire [2:0] sc_rank_6;
+assign sc_rank_6 = 3'd6 + sc_gap_6;
+wire [7:0] sc_mask_6;
+assign sc_mask_6 = sc_active_6 ? (8'b00000001 << sc_rank_6) : 8'd0;
+wire [3:0] sc_waited_7;
+assign sc_waited_7 = {1'b0, sc_offset} + {1'b0, sc_excess_7};
+wire [2:0] sc_gap_7;
+assign sc_gap_7 = (sc_waited_7 >= {1'b0, sc_singles}) ? sc_singles : sc_waited_7[2:0];
+wire [2:0] sc_rank_7;
+assign sc_rank_7 = 3'd7 + sc_gap_7;
+wire [7:0] sc_mask_7;
+assign sc_mask_7 = sc_active_7 ? (8'b00000001 << sc_rank_7) : 8'd0;
+wire [7:0] single_mask;
+assign single_mask = sc_mask_0 | sc_mask_1 | sc_mask_2 | sc_mask_3 | sc_mask_4 | sc_mask_5 | sc_mask_6 | sc_mask_7;
+//
+// SELECT THE ENGINE
+// other_chain chooses the two-chain result; otherwise use the single-chain
+// or independent result. The value and witness are selected together.
+//
+  wire [7:0] best_mask = other_chain ? dual_mask : single_mask;
+  assign Ex_cycle = other_chain ? dual_cost : single_cost;
+//
+// RECOVER ORIGINAL IDs FROM THE WINNING MASK
+// At slot i, an A bit selects the A entry whose rank equals the number of
+// earlier A bits; a B bit uses the analogous B rank. Decode slots 0..3 from
+// the head and slots 4..7 from the tail, so each population count observes
+// at most three bits instead of seven. Reverse IDs index from count_a-1
+// and count_b-1. Wrapped indices for absent entries remain unselected.
+//
+  wire [2:0] a_tail_id [0:3], b_tail_id [0:3];
+  wire [2:0] last_a = count_a[2:0] - 3'd1;
+  wire [2:0] last_b = 3'd7 - count_a[2:0];
+  wire [2:0] tail_index_a_0 = last_a - 3'd0;
+  assign a_tail_id[0] = a_id[tail_index_a_0];
+  wire [2:0] tail_index_a_1 = last_a - 3'd1;
+  assign a_tail_id[1] = a_id[tail_index_a_1];
+  wire [2:0] tail_index_a_2 = last_a - 3'd2;
+  assign a_tail_id[2] = a_id[tail_index_a_2];
+  wire [2:0] tail_index_a_3 = last_a - 3'd3;
+  assign a_tail_id[3] = a_id[tail_index_a_3];
+  wire [2:0] tail_index_b_0 = last_b - 3'd0;
+  assign b_tail_id[0] = b_id[tail_index_b_0];
+  wire [2:0] tail_index_b_1 = last_b - 3'd1;
+  assign b_tail_id[1] = b_id[tail_index_b_1];
+  wire [2:0] tail_index_b_2 = last_b - 3'd2;
+  assign b_tail_id[2] = b_id[tail_index_b_2];
+  wire [2:0] tail_index_b_3 = last_b - 3'd3;
+  assign b_tail_id[3] = b_id[tail_index_b_3];
+  wire [0:0] out_best_select_0;
+  assign out_best_select_0[0] = 1'b1;
+  wire [2:0] out_a_value_0 = ({3{out_best_select_0[0]}} & a_id[0]);
+  wire [2:0] out_b_value_0 = ({3{out_best_select_0[0]}} & b_id[0]);
+  assign Inst_order_O[0 +: 3] = best_mask[0] ? out_a_value_0 : out_b_value_0;
+  wire [1:0] out_best_select_1;
+  assign out_best_select_1[0] = (!best_mask[0]);
+  assign out_best_select_1[1] = (best_mask[0]);
+  wire [2:0] out_a_value_1 = ({3{out_best_select_1[0]}} & a_id[0]) | ({3{out_best_select_1[1]}} & a_id[1]);
+  wire [2:0] out_b_value_1 = ({3{out_best_select_1[1]}} & b_id[0]) | ({3{out_best_select_1[0]}} & b_id[1]);
+  assign Inst_order_O[3 +: 3] = best_mask[1] ? out_a_value_1 : out_b_value_1;
+  wire [2:0] out_best_select_2;
+  assign out_best_select_2[0] = (!best_mask[0] && !best_mask[1]);
+  assign out_best_select_2[1] = (best_mask[0] && !best_mask[1]) || (!best_mask[0] && best_mask[1]);
+  assign out_best_select_2[2] = (best_mask[0] && best_mask[1]);
+  wire [2:0] out_a_value_2 = ({3{out_best_select_2[0]}} & a_id[0]) | ({3{out_best_select_2[1]}} & a_id[1]) | ({3{out_best_select_2[2]}} & a_id[2]);
+  wire [2:0] out_b_value_2 = ({3{out_best_select_2[2]}} & b_id[0]) | ({3{out_best_select_2[1]}} & b_id[1]) | ({3{out_best_select_2[0]}} & b_id[2]);
+  assign Inst_order_O[6 +: 3] = best_mask[2] ? out_a_value_2 : out_b_value_2;
+  wire [3:0] out_best_select_3;
+  assign out_best_select_3[0] = (!best_mask[0] && !best_mask[1] && !best_mask[2]);
+  assign out_best_select_3[1] = (best_mask[0] && !best_mask[1] && !best_mask[2]) || (!best_mask[0] && best_mask[1] && !best_mask[2]) || (!best_mask[0] && !best_mask[1] && best_mask[2]);
+  assign out_best_select_3[2] = (best_mask[0] && best_mask[1] && !best_mask[2]) || (best_mask[0] && !best_mask[1] && best_mask[2]) || (!best_mask[0] && best_mask[1] && best_mask[2]);
+  assign out_best_select_3[3] = (best_mask[0] && best_mask[1] && best_mask[2]);
+  wire [2:0] out_a_value_3 = ({3{out_best_select_3[0]}} & a_id[0]) | ({3{out_best_select_3[1]}} & a_id[1]) | ({3{out_best_select_3[2]}} & a_id[2]) | ({3{out_best_select_3[3]}} & a_id[3]);
+  wire [2:0] out_b_value_3 = ({3{out_best_select_3[3]}} & b_id[0]) | ({3{out_best_select_3[2]}} & b_id[1]) | ({3{out_best_select_3[1]}} & b_id[2]) | ({3{out_best_select_3[0]}} & b_id[3]);
+  assign Inst_order_O[9 +: 3] = best_mask[3] ? out_a_value_3 : out_b_value_3;
+//
+// SECOND HALF: COUNT FROM THE TAIL
+// For output slot 4, observe mask bits 5..7. Their A count selects the A
+// identifier measured backward from the final A entry; the complementary
+// count selects B. The same construction shrinks to zero observed bits
+// for the last slot, which selects the corresponding chain's last ID.
+//
+  wire [3:0] out_best_select_4;
+  assign out_best_select_4[0] = (!best_mask[5] && !best_mask[6] && !best_mask[7]);
+  assign out_best_select_4[1] = (best_mask[5] && !best_mask[6] && !best_mask[7]) || (!best_mask[5] && best_mask[6] && !best_mask[7]) || (!best_mask[5] && !best_mask[6] && best_mask[7]);
+  assign out_best_select_4[2] = (best_mask[5] && best_mask[6] && !best_mask[7]) || (best_mask[5] && !best_mask[6] && best_mask[7]) || (!best_mask[5] && best_mask[6] && best_mask[7]);
+  assign out_best_select_4[3] = (best_mask[5] && best_mask[6] && best_mask[7]);
+  wire [2:0] out_a_value_4 = ({3{out_best_select_4[0]}} & a_tail_id[0]) | ({3{out_best_select_4[1]}} & a_tail_id[1]) | ({3{out_best_select_4[2]}} & a_tail_id[2]) | ({3{out_best_select_4[3]}} & a_tail_id[3]);
+  wire [2:0] out_b_value_4 = ({3{out_best_select_4[3]}} & b_tail_id[0]) | ({3{out_best_select_4[2]}} & b_tail_id[1]) | ({3{out_best_select_4[1]}} & b_tail_id[2]) | ({3{out_best_select_4[0]}} & b_tail_id[3]);
+  assign Inst_order_O[12 +: 3] = best_mask[4] ? out_a_value_4 : out_b_value_4;
+  wire [2:0] out_best_select_5;
+  assign out_best_select_5[0] = (!best_mask[6] && !best_mask[7]);
+  assign out_best_select_5[1] = (best_mask[6] && !best_mask[7]) || (!best_mask[6] && best_mask[7]);
+  assign out_best_select_5[2] = (best_mask[6] && best_mask[7]);
+  wire [2:0] out_a_value_5 = ({3{out_best_select_5[0]}} & a_tail_id[0]) | ({3{out_best_select_5[1]}} & a_tail_id[1]) | ({3{out_best_select_5[2]}} & a_tail_id[2]);
+  wire [2:0] out_b_value_5 = ({3{out_best_select_5[2]}} & b_tail_id[0]) | ({3{out_best_select_5[1]}} & b_tail_id[1]) | ({3{out_best_select_5[0]}} & b_tail_id[2]);
+  assign Inst_order_O[15 +: 3] = best_mask[5] ? out_a_value_5 : out_b_value_5;
+  wire [1:0] out_best_select_6;
+  assign out_best_select_6[0] = (!best_mask[7]);
+  assign out_best_select_6[1] = (best_mask[7]);
+  wire [2:0] out_a_value_6 = ({3{out_best_select_6[0]}} & a_tail_id[0]) | ({3{out_best_select_6[1]}} & a_tail_id[1]);
+  wire [2:0] out_b_value_6 = ({3{out_best_select_6[1]}} & b_tail_id[0]) | ({3{out_best_select_6[0]}} & b_tail_id[1]);
+  assign Inst_order_O[18 +: 3] = best_mask[6] ? out_a_value_6 : out_b_value_6;
+  wire [0:0] out_best_select_7;
+  assign out_best_select_7[0] = 1'b1;
+  wire [2:0] out_a_value_7 = ({3{out_best_select_7[0]}} & a_tail_id[0]);
+  wire [2:0] out_b_value_7 = ({3{out_best_select_7[0]}} & b_tail_id[0]);
+  assign Inst_order_O[21 +: 3] = best_mask[7] ? out_a_value_7 : out_b_value_7;
+endmodule
