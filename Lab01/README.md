@@ -15,8 +15,8 @@ bounded-wait threshold dynamic program.
 
 | Implementation | Cell area (µm²) | Period (ns) | Area × period (µm²·ns) | RTL / timed gate patterns |
 |---|---:|---:|---:|---:|
-| [Unrolled](rtl/unrolled/OISS.v) | 122,610.902 | 15.6 | 1,912,730.077 | 100,000 / 100,000 |
-| [Parameterized](rtl/parameterized/OISS.v) | 126,470.030 | 15.5 | 1,960,285.470 | 100,000 / 100,000 |
+| [Unrolled](rtl/unrolled/OISS.v) | 122,611 | 15.6 | 1,912,730 | 100,000 / 100,000 |
+| [Parameterized](rtl/parameterized/OISS.v) | 126,470 | 15.5 | 1,960,285 | 100,000 / 100,000 |
 
 The unrolled source has the lower measured area–period product. The parameterized
 source expresses much of the same scheduling structure with functions and
@@ -25,9 +25,8 @@ compaction and equal-cost witness selection. Compile one `OISS` implementation
 at a time. Their [annotated reading copies](rtl/annotated/README.md) explain the
 code without changing executable Verilog.
 
-The [measurement summary](results/README.md) records timing slack, source hashes,
-validation scope and result figures. These results establish the best measured
-pair presented here, not a proved minimum-area or minimum-delay circuit.
+The [results](results/README.md) explain the area–period tradeoff, timing margin
+and validation, with figures comparing the selected implementations.
 
 ## How it works
 

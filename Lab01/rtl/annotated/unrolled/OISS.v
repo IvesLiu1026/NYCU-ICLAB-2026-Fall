@@ -3,7 +3,6 @@
 // Selected unrolled implementation: early chain ranks and threshold witness selection.
 // The detailed English comments in this file were written by AI.
 // Executable RTL is copied unchanged from the measured reference below.
-// Removing full-line comments restores the reference byte for byte.
 // Compile only one OISS source at a time.
 //
 // Reading map: decode -> hazards -> groups/ranks -> compaction ->
@@ -13,7 +12,6 @@
 // register or a clock cycle. Ex_cycle counts scheduled-program cycles;
 // the physical evaluation period is a separate synthesis constraint.
 // Reference source: rtl/unrolled/OISS.v
-// Reference SHA256: 50178b02593c4fbfbac4a7618ee166fcff0b36bfa99965c664e2473de3dd10b1
 //
 //
 // INTERFACE AND LEGAL DOMAIN

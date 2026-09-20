@@ -7,7 +7,7 @@ body:
     id: source
     attributes:
       label: Lab and source
-      description: Include the source path and commit or SHA256 when available.
+      description: Include the source path and repository commit when available.
     validations:
       required: true
   - type: textarea

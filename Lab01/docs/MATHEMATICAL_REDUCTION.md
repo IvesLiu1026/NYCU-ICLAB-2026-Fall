@@ -106,7 +106,6 @@ prefix arithmetic, small waiting predicates and monotone Boolean selection.
 Witness selection and identifier reconstruction remain part of the circuit:
 computing only an optimal cost is insufficient for the interface.
 
-There is no proved lower bound here on UMC018 cell area, critical-path delay
-or their product. The [reported measurements](../results/README.md) qualify
-specific source hashes and periods. They establish measured performance, not
-a percentage gap to the globally best possible circuit.
+Mapped area and delay also depend on the library cells and synthesis choices.
+The [reported measurements](../results/README.md) show how these two implementations
+perform with UMC018.

@@ -3,7 +3,6 @@
 // Selected parameterized implementation: shared prefix arithmetic and stable compaction.
 // The detailed English comments in this file were written by AI.
 // Executable RTL is copied unchanged from the measured reference below.
-// Removing full-line comments restores the reference byte for byte.
 // Compile only one OISS source at a time.
 //
 // Reading map: decode -> hazards -> groups/ranks -> compaction ->
@@ -13,7 +12,6 @@
 // register or a clock cycle. Ex_cycle counts scheduled-program cycles;
 // the physical evaluation period is a separate synthesis constraint.
 // Reference source: rtl/parameterized/OISS.v
-// Reference SHA256: 49021f4eb3a9d1b0989b81b97641e84b918c85dfe3ac0916442443db7b3afb57
 //
 //
 // INTERFACE AND ASSUMPTIONS

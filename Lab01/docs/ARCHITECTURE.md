@@ -130,7 +130,9 @@ The single-chain engine computes the available slots around the chain and
 tests how many leading independent instructions issue before it starts. For
 each offset, the remaining independent instructions fill the available slots.
 Shared deficit comparisons test whether their finishes fit behind the chain
-completion. The minimum feasible offset determines both cost and order mask.
+completion. For the first feasible offset `d`, the result is
+`max(SA + d, I)`, where `I = max(j + B_latency[j])` is the independent work's
+earliest possible completion. The same offset determines the order mask.
 A nonempty chain has at least two members, so there are at most six independent
 instructions. A completely empty graph uses descending-latency issue order
 directly, with cost `max(i + latency[i])` over the sorted instructions.
@@ -161,19 +163,8 @@ ranks. Different equal-cost orders can be correct for the same input.
 
 The parameterized form is not a mechanical folding of the unrolled file.
 Its loops elaborate into combinational hardware, not sequential software loops.
-Each source therefore has its own hash and measured area/timing result.
+Each source is measured separately for area and timing.
 
-## Correctness scope
-
-The design computes its answer from the supplied instructions and latencies.
-It contains no lookup of known test vectors, pattern-number conditions or stored
-expected answers. Constant fields and narrowed widths follow the legal input
-contract; DP boundary constants follow the scheduling model.
-
-Validation checks the returned permutation, dependency legality and optimal
-completion against an independent exhaustive-order reference. The selected
-sources also have timed gate qualification at their recorded periods. Finite
-tests do not prove exhaustive top-level equivalence or cover inputs outside
-the documented contract. The [mathematical reduction](MATHEMATICAL_REDUCTION.md)
-explains scheduling optimality; the [results](../results/README.md) describe the
-separate physical and functional evidence.
+The [mathematical reduction](MATHEMATICAL_REDUCTION.md) develops the scheduling
+argument, and the [results](../results/README.md) summarize functional and timing
+validation.
