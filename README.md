@@ -1,7 +1,10 @@
 # 2026 Fall NYCU ICLAB
 
-Coursework for the Integrated Circuit Design Laboratory (ICLAB) at
+Personal solutions to lab problems from the Integrated Circuit Design Laboratory (ICLAB) at
 National Yang Ming Chiao Tung University, Fall 2026.
+
+I'm not enrolled in this course, and IC design isn't my field. I just enjoy
+solving puzzles. Some people do Sudoku; apparently, I do timing closure.
 
 ## About the course
 
@@ -11,8 +14,8 @@ circuits, pipelining, low-power design and SystemVerilog verification. Lab
 exercises and projects develop experience with the tools and techniques used
 to implement digital hardware. See the [official course overview](https://iclab.iee.nycu.edu.tw/iclab/courses.html).
 
-This repository collects selected implementations, technical explanations and
-measured results from the course. Each project directory contains its own documentation and results.
+This repository collects my selected implementations, technical explanations and
+measured results for these problems. Each project directory contains its own documentation and results.
 
 ## Projects
 
