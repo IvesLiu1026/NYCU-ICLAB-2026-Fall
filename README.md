@@ -22,6 +22,7 @@ measured results for these problems. Each project directory contains its own doc
 | Project | Topic |
 |---|---|
 | [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) |
+| [Lab02](Lab02/) | QC-LDPC Decoder |
 
 ## License and learning use
 
