@@ -1,5 +1,8 @@
 # Questions and feedback
 
+Please read the [license](LICENSE) and [academic integrity guidance](ACADEMIC_INTEGRITY.md)
+before sharing excerpts or using this repository for coursework.
+
 Use [Discussions](https://github.com/IvesLiu1026/NYCU-ICLAB-2026-Fall/discussions) for questions about the designs,
 experiments, mathematical reasoning, or development approach. Q&A is the place
 for questions; Ideas is the place for suggestions and alternative architectures.

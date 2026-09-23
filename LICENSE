@@ -1,0 +1,81 @@
+Personal Study and Reference License 1.0
+
+Copyright (c) 2026 Ives Liu (GitHub: IvesLiu1026)
+All rights reserved except for the permissions expressly granted below.
+
+Repository: https://github.com/IvesLiu1026/NYCU-ICLAB-2026-Fall
+
+1. Scope
+
+"Materials" means the code, documentation, figures and media in this repository
+to the extent that the copyright holder owns or is authorized to license them,
+unless a file carries a separate license. This is a custom, limited-purpose
+source-available license, not an open-source license.
+
+2. Personal study permission
+
+Subject to these terms, you receive a worldwide, non-exclusive, royalty-free
+copyright license to download and copy the Materials for your own non-commercial
+study and evaluation. For those purposes, you may compile, simulate, synthesize,
+analyze and privately modify the code, and retain the resulting evaluation
+artifacts. Keep this license and existing copyright and attribution notices with
+your copies and modifications of the Materials.
+
+You may quote brief excerpts of code or documentation for explanation, criticism
+or discussion, provided that you identify Ives Liu, link to this repository and
+this license, and identify any changes to the excerpt. This permission does not
+extend to republishing complete solutions, complete source files or substantial
+portions of the Materials. Linking readers to the original repository is welcome.
+
+3. Academic integrity and attribution
+
+You must not present copied or adapted Materials as your own original work,
+including in assignments, examinations, competitions or portfolio claims.
+Changing names, formatting, comments or implementation details does not remove
+this condition. Acknowledge the source of any excerpt you share under Section 2
+and distinguish your contributions from the original work.
+
+Permission to study this repository is not permission from an instructor or
+organizer to consult or submit it. Follow the rules of your course or assessment;
+attribution alone does not make a prohibited submission acceptable.
+
+4. Uses requiring separate permission
+
+Except for Section 2 and the independent rights preserved in Section 5, this
+license grants no permission to redistribute the Materials or modified versions,
+to incorporate them into other distributed software or hardware designs, or to
+use them commercially. Other uses require prior written permission from the
+copyright holder. Attribution by itself does not grant those additional rights.
+
+For permission requests, contact IvesLiu1026 through the repository's Discussions
+or a contact method listed on the GitHub profile. A request or unanswered message
+is not permission. Any permission granted separately applies only to its stated
+scope.
+
+5. Rights unaffected by this license
+
+Nothing here limits fair use, fair dealing or other rights and exceptions under
+applicable law. This license does not claim exclusive rights over ideas,
+algorithms, mathematical principles, facts, public-domain material or independent
+implementations that do not copy protected expression from the Materials.
+
+Nothing here restricts rights independently granted under GitHub's Terms of
+Service, including viewing and forking public repositories through its service,
+or rights granted under another applicable license or written agreement.
+
+Third-party material remains subject to its own terms. No patent or trademark
+rights are granted by this license.
+
+6. Warranty and liability
+
+To the maximum extent permitted by applicable law, the Materials are provided
+without warranties, and you use them at your own risk. The copyright holder is
+not liable for losses arising from their use. No promise is made that a design
+will satisfy a particular course, test suite, technology or performance target.
+
+7. Compliance
+
+The permissions in this license apply only while you comply with its terms.
+Section 5 continues to apply independently. A change to the license in a later
+repository revision does not withdraw permissions for copies already obtained
+under this version, provided that you continue to comply with this version.

@@ -23,6 +23,16 @@ measured results for these problems. Each project directory contains its own doc
 |---|---|
 | [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) |
 
+## License and learning use
+
+This is a source-available project under the custom
+[Personal Study and Reference License](LICENSE). Personal non-commercial study,
+local simulation, synthesis and private learning modifications are permitted.
+Other reuse or redistribution requires permission, subject to the license's
+exceptions. See [Academic integrity](ACADEMIC_INTEGRITY.md) before using it for coursework.
+
+**Learn from the ideas. Write your own solution.**
+
 ## Questions and feedback
 
 For questions about the designs or other approaches, start a
