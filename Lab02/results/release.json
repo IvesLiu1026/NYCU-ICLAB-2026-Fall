@@ -1,0 +1,118 @@
+{
+  "schema": "iclab.selected-release.v1",
+  "project": "Lab02",
+  "design": "hp12t8",
+  "rtl_file": "rtl/LDPC.v",
+  "source_sha256": "e889c97978f6f83c89862dd0e5b2bc0e1aaf00573401ff58d07e6837b086fc91",
+  "language": "Verilog-2005",
+  "architecture": "Eight-lane half-parallel, edge-aligned banks with compressed rotating message records",
+  "graph": {
+    "variables": 128,
+    "checks": 64,
+    "edges": 448,
+    "layers": 4,
+    "checks_per_layer": 16,
+    "lanes": 8
+  },
+  "measurement": {
+    "period_ns": 7.0,
+    "area_um2": 561592.795051,
+    "patterns": 2000,
+    "total_cycles": 82336,
+    "mean_cycles": 41.168,
+    "min_cycles": 7,
+    "max_cycles": 63,
+    "mean_decode_ns": 288.176,
+    "total_decode_ns": 576352,
+    "cost_formula": "area_um2^2 * period_ns * total_cycles",
+    "cost": 1.8177362128958355e+17,
+    "cost_decimal": "181773621289583550.7538507716",
+    "setup_slack_ns": 0.000152,
+    "hold_slack_ns": 0.275027,
+    "latches": 0,
+    "constraint_violations": 0,
+    "gate_timing_violations": 0,
+    "synthesis_seconds": 212.84215281624347,
+    "stages": {
+      "rtl_patterns_passed": 2000,
+      "synthesis_timing_met": true,
+      "gate_sdf_patterns_passed": 2000
+    },
+    "warning_codes": {
+      "TFIPC": 11
+    }
+  },
+  "tools": {
+    "synthesis": "Synopsys Design Compiler T-2022.03",
+    "simulation": "Synopsys VCS T-2022.06",
+    "technology": "UMC 0.18 um standard-cell slow corner"
+  },
+  "corpus": {
+    "name": "TA2000",
+    "input_sha256": "4254f5bbaaef5aea5bc434430bec9c83231ee651981f66dbb482f8e5046c8937",
+    "output_sha256": "030be5844f3cff9028936fa20b0cf407dc95643f24340b5952d6617841b9b0c9",
+    "note": "Supplied vectors are not distributed."
+  },
+  "comparison_rank": {
+    "approximate_rank": 10,
+    "existing_valid_results": 120,
+    "total_including_this_design": 121,
+    "scope": "Insertion rank against a fixed 120-valid-result comparison snapshot; not an official assigned course rank."
+  },
+  "leader_reference": {
+    "period_ns": 6.8,
+    "area_um2": 726196,
+    "total_cycles": 40168,
+    "cost": 1.4404454825733923e+17,
+    "source": "Reported comparison benchmark; no reference implementation is included.",
+    "required_cost_reduction_percent": 20.756077127460713
+  },
+  "latency_histogram": [
+    {
+      "cycles": 7,
+      "frames": 169,
+      "iterations": 1
+    },
+    {
+      "cycles": 15,
+      "frames": 364,
+      "iterations": 2
+    },
+    {
+      "cycles": 23,
+      "frames": 242,
+      "iterations": 3
+    },
+    {
+      "cycles": 31,
+      "frames": 127,
+      "iterations": 4
+    },
+    {
+      "cycles": 39,
+      "frames": 73,
+      "iterations": 5
+    },
+    {
+      "cycles": 47,
+      "frames": 59,
+      "iterations": 6
+    },
+    {
+      "cycles": 55,
+      "frames": 36,
+      "iterations": 7
+    },
+    {
+      "cycles": 63,
+      "frames": 930,
+      "iterations": 8
+    }
+  ],
+  "area_components_um2": {
+    "logic_excluding_buf_inv": 322155.192682,
+    "buf_inv": 48741.740876,
+    "sequential": 190695.861492
+  },
+  "scope": "Exact measured source, period and TA2000 corpus; no global optimum or hidden-input guarantee."
+}
