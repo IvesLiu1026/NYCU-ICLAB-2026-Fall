@@ -1,0 +1,60 @@
+{
+  "engine": "ManimGL",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "duration_seconds": 131.4,
+  "audio": false,
+  "selected_source_sha256": "e889c97978f6f83c89862dd0e5b2bc0e1aaf00573401ff58d07e6837b086fc91",
+  "explanation_scope": "Conceptual register/dataflow views and a checked synthetic arithmetic example, not a waveform replay.",
+  "chapters": [
+    {
+      "index": 1,
+      "title": "An LDPC decoder in eight lanes.",
+      "start_seconds": 0
+    },
+    {
+      "index": 2,
+      "title": "Reuse eight lanes twice per layer.",
+      "start_seconds": 18.5
+    },
+    {
+      "index": 3,
+      "title": "One check node. Seven exact messages.",
+      "start_seconds": 39.5
+    },
+    {
+      "index": 4,
+      "title": "Move aligned data. Preserve two schedules.",
+      "start_seconds": 58.2
+    },
+    {
+      "index": 5,
+      "title": "Compact history. Ready arithmetic at the head.",
+      "start_seconds": 86.4
+    },
+    {
+      "index": 6,
+      "title": "Qualified at 7.0 ns. Approximate rank 10.",
+      "start_seconds": 111.0
+    }
+  ],
+  "artifacts": {
+    "ldpc-architecture.mp4": {
+      "bytes": 2906812,
+      "sha256": "548cc89940eec681ea97da3d7be0dac1c5425839c47b4a10e6403bf91f3889a6"
+    },
+    "ldpc-preview.gif": {
+      "bytes": 673018,
+      "sha256": "a914c95c4465f37f1519d5d63b68aeb81cfa06afa0d0827c99197c1f42c39e7a"
+    },
+    "ldpc-min-sum.gif": {
+      "bytes": 526656,
+      "sha256": "b2d343b54ce62133d32070d2b752f2ddf881fbc418d80f2ceb09e453732e3831"
+    },
+    "ldpc-poster.png": {
+      "bytes": 342154,
+      "sha256": "cdf9de94121c7c5574a6c51f598603135eddfeb955fe1b47c618c8ffefef98e2"
+    }
+  }
+}

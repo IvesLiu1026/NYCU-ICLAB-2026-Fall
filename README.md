@@ -19,10 +19,10 @@ measured results for these problems. Each project directory contains its own doc
 
 ## Projects
 
-| Project | Topic |
-|---|---|
-| [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) |
-| [Lab02](Lab02/) | QC-LDPC Decoder |
+| Project | Topic | Selected result |
+|---|---|---|
+| [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) | 15.6 ns / 122,611 µm² |
+| [Lab02](Lab02/) | QC-LDPC Decoder | 7.0 ns / 561,593 µm²; approx. rank 10 / 121 |
 
 ## License and learning use
 
