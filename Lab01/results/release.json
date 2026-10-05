@@ -3,11 +3,6 @@
   "lab": "NYCU ICLAB 2026 Fall Lab01 OISS",
   "recommended": "unrolled",
   "metric": "cell area multiplied by requested period, qualified by STA and timed gate simulation",
-  "tools": {
-    "synthesis": "Synopsys Design Compiler T-2022.03",
-    "simulation": "Synopsys VCS T-2022.06"
-  },
-  "process": "UMC018, 180 nm",
   "constraints": "Original course combinational constraints; each result uses the stated requested period.",
   "implementations": {
     "parameterized": {
@@ -90,12 +85,9 @@
   "additional_functional_validation": {
     "cases_per_implementation_per_simulator": 26093,
     "new_random_legal_inputs": 20000,
-    "simulators": [
-      "Verilator 5.020",
-      "Icarus Verilog 12.0"
-    ],
     "both_implementations_passed": true,
     "scope": "Functional validation, separate from the timed gate measurements."
   },
-  "scope": "Best measured selected implementations; no global physical optimum or exhaustive hidden-case claim."
+  "scope": "Best measured selected implementations; no global physical optimum or exhaustive hidden-case claim.",
+  "evaluation_scope": "Results are specific to the measured implementation and evaluation conditions. Detailed toolchain identifiers and verification assets are retained privately."
 }

@@ -108,4 +108,4 @@ computing only an optimal cost is insufficient for the interface.
 
 Mapped area and delay also depend on the library cells and synthesis choices.
 The [reported measurements](../results/README.md) show how these two implementations
-perform with UMC018.
+perform under their measured evaluation conditions.

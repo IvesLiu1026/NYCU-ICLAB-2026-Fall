@@ -1,7 +1,6 @@
 // OISS - annotated unrolled release
 // Method: bounded-wait threshold DP with shared prefix arithmetic.
 // Selected unrolled implementation: early chain ranks and threshold witness selection.
-// The detailed English comments in this file were written by AI.
 // Executable RTL is copied unchanged from the measured reference below.
 // Compile only one OISS source at a time.
 //

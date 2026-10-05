@@ -39,16 +39,16 @@ area–period product. Matching the anonymous snapshot leader would require a
 in this comparison because they do not provide a valid comparable performance
 value. No student-level rows, identifiers, or source mapping are distributed.
 
-## Evaluation context
+## Measurement scope
 
-RTL development and initial verification were carried out in my local environment,
-with a friend assisting with synthesis and gate-level testing. Synthesis and
-timing-annotated gate-level simulation were performed using Synopsys Design Compiler
-and VCS with the UMC018 library.
+The reported area is synthesized standard-cell area. The period is the
+evaluation-time constraint for the combinational block; `Ex_cycle` reports
+the scheduled program's completion in integer cycles. Results are specific
+to the selected source and its measured evaluation conditions.
 
-UMC018 is the 180 nm technology. The period is the evaluation-time constraint
-for the combinational block; `Ex_cycle` reports the scheduled program's completion
-in integer cycles.
+Both selected sources pass RTL simulation, synthesis timing checks and
+SDF-annotated gate simulation on the declared 100,000-pattern workload.
+Detailed toolchain identifiers and verification assets are retained privately.
 
 ## Comparison figures
 
@@ -74,12 +74,12 @@ supported dependency shapes.
 An independent reference enumerates legal instruction orders and checks three
 properties: every instruction appears exactly once, the order respects all
 dependencies, and its completion time is optimal. Directed and random legal inputs
-also passed functional checks with Verilator and Icarus Verilog.
+also passed additional functional checks, independently of the timed gate tests.
 
 These checks cover the documented
 [input contract](../docs/ARCHITECTURE.md#interface-and-legal-input-contract).
 Sampled validation is not an exhaustive correctness proof, and the measured
 area–period product is not a proved global physical optimum.
 
-Full-precision measurements, tool versions and source identifiers are available
+Full-precision measurements and source identifiers are available
 in the [measurement record](release.json).

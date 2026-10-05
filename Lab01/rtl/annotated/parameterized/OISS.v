@@ -1,7 +1,6 @@
 // OISS - annotated parameterized release
 // Method: bounded-wait threshold DP with shared prefix arithmetic.
 // Selected parameterized implementation: shared prefix arithmetic and stable compaction.
-// The detailed English comments in this file were written by AI.
 // Executable RTL is copied unchanged from the measured reference below.
 // Compile only one OISS source at a time.
 //

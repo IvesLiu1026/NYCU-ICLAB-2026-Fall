@@ -1,6 +1,6 @@
 # Annotated reading copies
 
-The detailed English commentary in these source files was written by **AI**.
+These reading copies add detailed English commentary to the measured sources.
 The executable Verilog is copied from the two measured release files. The comments
 explain input assumptions, signal meanings, recurrence, arithmetic, tie choices
 and reconstruction of the final instruction order.

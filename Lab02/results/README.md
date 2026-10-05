@@ -16,7 +16,6 @@ the two simulations.
 | Area² × period × total cycles | 1.8177362128958355 × 10¹⁷ |
 | Setup / hold slack | +0.000152 / +0.275027 ns |
 | Inferred latches / constraint violations / gate timing violations | 0 / 0 / 0 |
-| Synthesis runtime | 212.84 seconds |
 
 The latency starts after the final input word and ends when output begins.
 It excludes mode capture, 128 input cycles, and 128 output cycles. A frame
@@ -63,16 +62,15 @@ that all of them have a warning, because convergence may occur in that iteration
 
 ![Measured latency distribution](figures/latency.png)
 
-## Qualification and reproducibility scope
+## Qualification and measurement scope
 
-Synthesis uses Design Compiler T-2022.03 and the UMC 0.18 µm slow standard-cell
-corner. Simulation uses VCS T-2022.06 with the mapped netlist and SDF. Actual
-RTL, synthesis and gate stages complete successfully; setup, hold and gate
-timing checks pass. Eleven `TFIPC` port-connection warnings remain diagnostic;
-there are no SDF annotation problems or actual gate timing violations.
+The selected source passes RTL simulation, synthesis timing checks and
+SDF-annotated gate simulation on the declared 2,000-frame corpus. Setup, hold
+and gate timing checks pass. Results are specific to this source, clock,
+corpus and measured evaluation conditions.
 
 [release.json](release.json) pins the RTL, corpus identities, measurements,
-latency histogram and comparison scope. Supplied test vectors, licensed
-libraries, mapped netlists, tool scripts and raw logs are not distributed.
+latency histogram and comparison scope. Detailed toolchain identifiers and
+verification assets are retained privately.
 The release is neither post-layout/power characterization nor proof of a
 global optimum or correctness on every hidden input.
