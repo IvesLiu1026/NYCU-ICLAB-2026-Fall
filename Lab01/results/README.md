@@ -21,6 +21,24 @@ of 86,816 µm². That reference passed a smaller 100-pattern RTL and timed gate
 screen. This comparison illustrates why minimizing area alone would choose a
 different operating point from minimizing area times period.
 
+## Approximate comparison rank
+
+The two selected Lab01 implementations are inserted into a fixed anonymized
+snapshot containing **115 valid Lab01 performance results**. Both points land at
+**rank 3 of 116** because only two reference points have a lower `CT × Area`
+value. This is a performance comparison, not an official course-assigned rank.
+
+| Implementation | Comparison value | Approx. rank | Above the snapshot leader |
+|---|---:|---:|---:|
+| Unrolled | 1,912,730 µm²·ns | 3 / 116 | 3.73% |
+| Parameterized | 1,960,285 µm²·ns | 3 / 116 | 6.31% |
+
+The unrolled implementation is the recommended point because it has the lower
+area–period product. Matching the anonymous snapshot leader would require a
+3.59% reduction from the unrolled value. Sixteen source rows are not included
+in this comparison because they do not provide a valid comparable performance
+value. No student-level rows, identifiers, or source mapping are distributed.
+
 ## Evaluation context
 
 RTL development and initial verification were carried out in my local environment,

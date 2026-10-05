@@ -28,6 +28,10 @@ from total-cycle cost by the fixed frame count; compare only matching corpora.
 This cost inserts at **rank 10 among 121 entries**, comprising 120 valid
 results in the comparison snapshot plus this design. The ranking is a
 performance comparison, not an official grade or course-assigned rank.
+Nine existing reference points have a lower cost, placing the selected design
+in the top **8.3%** of this comparison set. The metric is specific to Lab02:
+`area² × period × total cycles`; it must not be compared directly with the
+Lab01 `CT × Area` ranking.
 No participant names, student IDs, accounts or other implementations are
 included in this release.
 

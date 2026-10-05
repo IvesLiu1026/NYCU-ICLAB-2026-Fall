@@ -57,6 +57,9 @@
     "approximate_rank": 10,
     "existing_valid_results": 120,
     "total_including_this_design": 121,
+    "better_existing_results": 9,
+    "position_percent_of_comparison_set": 8.264462809917356,
+    "metric": "Area² × period × total cycles",
     "scope": "Insertion rank against a fixed 120-valid-result comparison snapshot; not an official assigned course rank."
   },
   "leader_reference": {
@@ -65,6 +68,7 @@
     "total_cycles": 40168,
     "cost": 1.4404454825733923e+17,
     "source": "Reported comparison benchmark; no reference implementation is included.",
+    "selected_above_leader_percent": 26.19264212960033,
     "required_cost_reduction_percent": 20.756077127460713
   },
   "latency_histogram": [

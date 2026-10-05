@@ -57,6 +57,35 @@
     "sdf_verified": true,
     "outcome": "qualified"
   },
+  "comparison_rank": {
+    "approximate_rank": 3,
+    "existing_valid_results": 115,
+    "total_including_this_design": 116,
+    "better_existing_results": 2,
+    "position_percent_of_comparison_set": 2.586206896551724,
+    "metric": "CT × Area; the selected release uses its 15.6 ns requested period as CT.",
+    "scope": "Insertion rank against a fixed anonymized 115-valid-result comparison snapshot; not an official assigned course rank."
+  },
+  "implementation_comparison_ranks": {
+    "unrolled": {
+      "approximate_rank": 3,
+      "total_including_this_design": 116,
+      "performance": 1912730.0772527999,
+      "above_leader_percent": 3.7270836138535435,
+      "required_reduction_to_leader_percent": 3.5931634092098985
+    },
+    "parameterized": {
+      "approximate_rank": 3,
+      "total_including_this_design": 116,
+      "performance": 1960285.470487,
+      "above_leader_percent": 6.306005913950563,
+      "required_reduction_to_leader_percent": 5.931937579382829
+    }
+  },
+  "leader_reference": {
+    "performance": 1844002.56,
+    "source": "Anonymous comparison snapshot; no reference implementation is included."
+  },
   "adp_improvement_over_reference_percent": 44.92020311190904,
   "additional_functional_validation": {
     "cases_per_implementation_per_simulator": 26093,

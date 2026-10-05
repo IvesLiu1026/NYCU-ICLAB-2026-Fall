@@ -19,10 +19,15 @@ measured results for these problems. Each project directory contains its own doc
 
 ## Projects
 
-| Project | Topic | Selected result |
-|---|---|---|
-| [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) | 15.6 ns / 122,611 µm² |
-| [Lab02](Lab02/) | QC-LDPC Decoder | 7.0 ns / 561,593 µm²; approx. rank 10 / 121 |
+| Project | Topic | Selected result | Approx. comparison rank |
+|---|---|---|---|
+| [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) | 15.6 ns / 122,611 µm² | 3 / 116 |
+| [Lab02](Lab02/) | QC-LDPC Decoder | 7.0 ns / 561,593 µm² | 10 / 121 |
+
+The ranks are anonymous insertion comparisons against fixed, lab-specific
+performance snapshots. They are not official course-assigned ranks, and the
+two labs use different cost formulas, so their rank positions should not be
+compared as if they were one common leaderboard.
 
 ## License and learning use
 
