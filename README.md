@@ -15,7 +15,7 @@ exercises and projects develop experience with the tools and techniques used
 to implement digital hardware. See the [official course overview](https://iclab.iee.nycu.edu.tw/iclab/courses.html).
 
 This repository collects my selected implementations, technical explanations and
-measured results for these problems. Each project directory contains its own documentation and results.
+measured results for these problems. Each project directory contains its documentation and any published results.
 
 ## Projects
 
@@ -23,6 +23,7 @@ measured results for these problems. Each project directory contains its own doc
 |---|---|---|---|
 | [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) | 15.6 ns / 122,611 µm² | 3 / 116 |
 | [Lab02](Lab02/) | QC-LDPC Decoder | 7.0 ns / 561,593 µm² | 10 / 121 |
+| [Lab03](Lab03/) | ZUMA | Coming soon — still rolling | — |
 
 The ranks are anonymous insertion comparisons against fixed, lab-specific
 performance snapshots. They are not official course-assigned ranks, and the
