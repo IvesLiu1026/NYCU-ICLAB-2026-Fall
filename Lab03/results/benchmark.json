@@ -1,0 +1,27 @@
+{
+  "schema": "iclab.reported-performance.v1",
+  "project": "Lab03",
+  "status": "reported_result",
+  "period_ns": 2.8,
+  "area_um2": 157211,
+  "total_cycles": 5499,
+  "latency_times_period_ns": "15397.2",
+  "objective_formula": "area_um2 * total_cycles * period_ns",
+  "objective_decimal": "2420609209.2",
+  "comparison": {
+    "rank": 1,
+    "label": "Rank 1",
+    "snapshot_date": "2026-10-08",
+    "existing_positive_results": 121,
+    "total_including_result": 122,
+    "official_course_rank": null,
+    "scope": "Approximate insertion comparison against the fixed snapshot.",
+    "reference": {
+      "period_ns": 2.9,
+      "area_um2": 155442.7,
+      "total_cycles": 5713,
+      "objective_decimal": "2575328020.79"
+    },
+    "objective_reduction_percent": 6.007732232204693
+  }
+}

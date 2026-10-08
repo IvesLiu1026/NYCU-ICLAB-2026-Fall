@@ -1,0 +1,28 @@
+{
+  "schema": "iclab.selected-media.v1",
+  "project": "Lab03",
+  "duration_seconds": 84,
+  "width": 1920,
+  "height": 1080,
+  "fps": 24,
+  "audio": false,
+  "scope": "Conceptual selected-architecture illustrations; synthetic cascade example, not a gate waveform.",
+  "assets": {
+    "zuma-architecture.mp4": {
+      "bytes": 1124520,
+      "sha256": "eb5a6c51130f3491f23bb0e118b8f95f7132d633709877ae96c9abd9e8e93308"
+    },
+    "zuma-poster.png": {
+      "bytes": 83066,
+      "sha256": "9c059bfa3f7f6076a31727f70fd67ddd218c2cf89e6044442b38309d829fd809"
+    },
+    "zuma-preview.gif": {
+      "bytes": 314345,
+      "sha256": "1b0a0c7280c4f6d52938c3a35ba018921cd15d2c9df95b21cabda9aece383a56"
+    },
+    "zuma-cascade.gif": {
+      "bytes": 241915,
+      "sha256": "87032cd0cd42d99707b764ae6067ba1302aa2f608cbd1ef5589137959eeccb03"
+    }
+  }
+}

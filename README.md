@@ -23,12 +23,12 @@ measured results for these problems. Each project directory contains its documen
 |---|---|---|---|
 | [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) | 15.6 ns / 122,611 µm² | 3 / 116 |
 | [Lab02](Lab02/) | QC-LDPC Decoder | 7.0 ns / 561,593 µm² | 10 / 121 |
-| [Lab03](Lab03/) | ZUMA | Coming soon — still rolling | — |
+| [Lab03](Lab03/) | ZUMA | Reported: 2.8 ns / 157,211 µm² / 5,499 cycles | **Rank 1 / 122** |
 | [Lab04](Lab04/) | FlashAttention | Write-up in progress | — |
 
 The ranks are anonymous insertion comparisons against fixed, lab-specific
 performance snapshots. They are not official course-assigned ranks, and the
-two labs use different cost formulas, so their rank positions should not be
+labs use different cost formulas, so their rank positions should not be
 compared as if they were one common leaderboard.
 
 ## License and learning use

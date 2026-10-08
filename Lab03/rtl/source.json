@@ -1,0 +1,10 @@
+{
+  "schema": "iclab.selected-source.v1",
+  "project": "Lab03",
+  "rtl_file": "ZUMA.v",
+  "source_sha256": "5de76b6dec25215fc46bbc82924353c33eb3d65d93ffa8878ba9e064c7407041",
+  "language": "Verilog-2005",
+  "architecture": "Dense even/odd ring with registered windows, cached frontier comparisons and replay",
+  "capacity_beads": 256,
+  "color_bits": 3
+}
