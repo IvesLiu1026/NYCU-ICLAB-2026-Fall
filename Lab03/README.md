@@ -5,9 +5,9 @@ Dense even/odd storage, small registered head windows and cached comparisons
 keep each cascade decision local. Counting the complete chain before replay
 allows every output beat to carry the same final chain count.
 
-**Reported performance: 2.8 ns · 157,211 µm² · 5,499 total cycles.**
+Selected result: 2.8 ns · 157,211 µm² · 5,499 total cycles · cost 2.420609 × 10⁹.
 
-**Rank 1 / 122 in the snapshot comparison · objective 2.420609 × 10⁹.**
+Approximate comparison rank: 1 / 122.
 
 One marble starts a chain reaction. The circuit does the bookkeeping.
 
@@ -19,16 +19,16 @@ One marble starts a chain reaction. The circuit does the bookkeeping.
 
 ## Performance snapshot
 
-| Metric | Reported result |
+| Metric | Selected result |
 | --- | ---: |
 | Clock period | 2.8 ns |
 | Cell area | 157,211 µm² |
 | Total latency | 5,499 cycles |
 | Period × total cycles | 15,397.2 ns |
 | Area × period × total cycles | 2,420,609,209.2 |
-| Approximate comparison rank | **Rank 1 / 122** |
+| Approximate comparison rank | 1 / 122 |
 
-The comparison inserts this reported result into the 121 positive results in
+The comparison inserts this result into the 121 positive results in
 the 8 October 2026 snapshot. It is an approximate comparison rank, not an
 official course-assigned rank. The [results page](results/README.md) gives the
 formula and performance record.
@@ -55,7 +55,7 @@ formula and performance record.
 | [Cascade algorithm](docs/ALGORITHM.md) | Stable-ring reasoning and a three-level example |
 | [Interface and timing](docs/PROTOCOL.md) | Port widths, reset, loading, output and request scheduling |
 | [Evaluation](docs/EVALUATION.md) | Source/clock checks and latency accounting |
-| [Results](results/README.md) | Reported performance and snapshot comparison |
+| [Results](results/README.md) | Performance and snapshot comparison |
 | [Architecture film](media/README.md) | MP4, looping preview, poster and illustration scope |
 
 [Back to the course index](../README.md)

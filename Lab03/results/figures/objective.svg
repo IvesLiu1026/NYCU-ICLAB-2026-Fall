@@ -27,7 +27,7 @@ Q 44.2368 115.5096 44.2368 122.0976
 L 44.2368 229.2624
 Q 44.2368 235.8504 58.0608 235.8504
 z
-" clip-path="url(#pa85546ad0f)" style="fill: #152139; stroke: #59dde0; stroke-width: 1.1; stroke-linejoin: miter"/>
+" clip-path="url(#pe079baca64)" style="fill: #152139; stroke: #59dde0; stroke-width: 1.1; stroke-linejoin: miter"/>
    </g>
    <g id="patch_3">
     <path d="M 339.1488 235.8504
@@ -40,7 +40,7 @@ Q 325.3248 115.5096 325.3248 122.0976
 L 325.3248 229.2624
 Q 325.3248 235.8504 339.1488 235.8504
 z
-" clip-path="url(#pa85546ad0f)" style="fill: #152139; stroke: #ffcd72; stroke-width: 1.1; stroke-linejoin: miter"/>
+" clip-path="url(#pe079baca64)" style="fill: #152139; stroke: #ffcd72; stroke-width: 1.1; stroke-linejoin: miter"/>
    </g>
    <g id="patch_4">
     <path d="M 620.2368 235.8504
@@ -53,31 +53,31 @@ Q 606.4128 115.5096 606.4128 122.0976
 L 606.4128 229.2624
 Q 606.4128 235.8504 620.2368 235.8504
 z
-" clip-path="url(#pa85546ad0f)" style="fill: #152139; stroke: #9ce6b0; stroke-width: 1.1; stroke-linejoin: miter"/>
+" clip-path="url(#pe079baca64)" style="fill: #152139; stroke: #9ce6b0; stroke-width: 1.1; stroke-linejoin: miter"/>
    </g>
    <g id="text_1">
-    <text style="font-weight: 700; font-size: 24px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #ebf2ff" x="50.688" y="48.312" transform="rotate(-0 50.688 48.312)">ZUMA · Reported performance</text>
+    <text style="font-size: 24px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #ebf2ff" x="50.688" y="48.312" transform="rotate(-0 50.688 48.312)">ZUMA · Performance</text>
    </g>
    <g id="text_2">
     <text style="font-size: 14px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #95a6c3" x="50.688" y="80.3736" transform="rotate(-0 50.688 80.3736)">Area × total cycles × clock period</text>
    </g>
    <g id="text_3">
-    <text style="font-weight: 700; font-size: 20px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #baacff" x="870.912" y="73.3464" transform="rotate(-0 870.912 73.3464)">Rank 1 / 122</text>
+    <text style="font-size: 20px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #baacff" x="870.912" y="73.3464" transform="rotate(-0 870.912 73.3464)">1 / 122</text>
    </g>
    <g id="text_4">
-    <text style="font-weight: 700; font-size: 21px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #59dde0" x="179.712" y="166.102688" transform="rotate(-0 179.712 166.102688)">2.8 ns</text>
+    <text style="font-size: 21px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #59dde0" x="179.712" y="166.102688" transform="rotate(-0 179.712 166.102688)">2.8 ns</text>
    </g>
    <g id="text_5">
     <text style="font-size: 14px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="179.712" y="205.895125" transform="rotate(-0 179.712 205.895125)">Clock period</text>
    </g>
    <g id="text_6">
-    <text style="font-weight: 700; font-size: 21px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #ffcd72" x="460.8" y="166.079719" transform="rotate(-0 460.8 166.079719)">157,211 µm²</text>
+    <text style="font-size: 21px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #ffcd72" x="460.8" y="166.102688" transform="rotate(-0 460.8 166.102688)">157,211 µm²</text>
    </g>
    <g id="text_7">
     <text style="font-size: 14px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="460.8" y="205.895125" transform="rotate(-0 460.8 205.895125)">Cell area</text>
    </g>
    <g id="text_8">
-    <text style="font-weight: 700; font-size: 21px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #9ce6b0" x="741.888" y="166.020656" transform="rotate(-0 741.888 166.020656)">5,499 cycles</text>
+    <text style="font-size: 21px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #9ce6b0" x="741.888" y="166.102688" transform="rotate(-0 741.888 166.102688)">5,499 cycles</text>
    </g>
    <g id="text_9">
     <text style="font-size: 14px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="741.888" y="205.895125" transform="rotate(-0 741.888 205.895125)">Total latency</text>
@@ -86,15 +86,15 @@ z
     <text style="font-size: 20px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #ebf2ff" x="460.8" y="278.892" transform="rotate(-0 460.8 278.892)">157,211 × 5,499 × 2.8</text>
    </g>
    <g id="text_11">
-    <text style="font-weight: 700; font-size: 29px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #9ce6b0" x="460.8" y="329.4" transform="rotate(-0 460.8 329.4)">= 2,420,609,209.2</text>
+    <text style="font-size: 29px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #9ce6b0" x="460.8" y="329.4" transform="rotate(-0 460.8 329.4)">= 2,420,609,209.2</text>
    </g>
    <g id="text_12">
-    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="460.8" y="401.868" transform="rotate(-0 460.8 401.868)">Reported aggregate result · 8 October 2026 snapshot comparison</text>
+    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="460.8" y="401.868" transform="rotate(-0 460.8 401.868)">Performance · 8 October 2026 snapshot comparison</text>
    </g>
   </g>
  </g>
  <defs>
-  <clipPath id="pa85546ad0f">
+  <clipPath id="pe079baca64">
    <rect x="0" y="0" width="921.6" height="439.2"/>
   </clipPath>
  </defs>

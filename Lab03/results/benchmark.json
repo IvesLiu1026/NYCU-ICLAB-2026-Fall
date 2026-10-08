@@ -1,7 +1,7 @@
 {
-  "schema": "iclab.reported-performance.v1",
+  "schema": "iclab.performance.v1",
   "project": "Lab03",
-  "status": "reported_result",
+  "status": "aggregate_result",
   "period_ns": 2.8,
   "area_um2": 157211,
   "total_cycles": 5499,
@@ -10,7 +10,7 @@
   "objective_decimal": "2420609209.2",
   "comparison": {
     "rank": 1,
-    "label": "Rank 1",
+    "label": "1 / 122",
     "snapshot_date": "2026-10-08",
     "existing_positive_results": 121,
     "total_including_result": 122,

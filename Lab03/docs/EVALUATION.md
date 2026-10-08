@@ -6,7 +6,7 @@ gaps are not interchangeable with processing latency. Use one checker counting
 convention throughout a comparison; a different sampling edge can add a cycle
 per shot and materially change the total.
 
-The [performance record](../results/benchmark.json) stores the reported
+The [performance record](../results/benchmark.json) stores the
 aggregate point and the fixed comparison snapshot. The
 [source record](../rtl/source.json) stores the selected implementation's byte
 identity and language. These are separate records; no source-specific

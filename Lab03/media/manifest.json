@@ -49,16 +49,16 @@
   ],
   "assets": {
     "zuma-architecture.mp4": {
-      "bytes": 2527845,
-      "sha256": "9b99ad5f7def326e767ec663a7351a1ad7d6f26c04a8552daf8480299405bec6"
+      "bytes": 2498924,
+      "sha256": "7abea3419856f8afcbfd5308a288de5759fd7875a6f243db61b3faf0844e6296"
     },
     "zuma-poster.png": {
-      "bytes": 353554,
-      "sha256": "c642b407928f91d0e54e5cb6055fe4f9f86b5b165b307e591186d0d0100d2fa1"
+      "bytes": 332001,
+      "sha256": "89b0c648a437bc246b6a2c3a1420044c6444bbd5664ffccdb2282c6dd8f20c51"
     },
     "zuma-preview.gif": {
-      "bytes": 1139643,
-      "sha256": "52284ffcb0b7aeaa9249e5a04a5558ee92e96def5c462b4ff57f8605751c60f8"
+      "bytes": 1139656,
+      "sha256": "18d807015b0dcb83b8ba15d239a3af48f3668b2a943ad6f0b31c31b177074fe8"
     },
     "zuma-cascade.gif": {
       "bytes": 893339,

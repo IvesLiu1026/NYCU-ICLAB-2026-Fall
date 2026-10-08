@@ -12,7 +12,7 @@ explanations and no audio. Both looping previews are 16 seconds.
 
 | Chapter | Topic |
 | --- | --- |
-| 0:00 | Reported performance snapshot |
+| 0:00 | Performance snapshot |
 | 0:09 | Dense even/odd storage and circular addressing |
 | 0:21 | Registered windows and cached equality flags |
 | 0:36 | Synthetic three-level cascade: counts 3, 4 and 3 |
@@ -23,8 +23,8 @@ explanations and no audio. Both looping previews are 16 seconds.
 The scenes explain the selected circuit's register roles and dataflow. They
 are conceptual views, not cycle-accurate RTL or gate-level waveforms. The
 synthetic cyclic cascade is independently checked; no supplied test vector
-appears in the film. Performance panels present the reported aggregate record
-and its Rank 1 snapshot comparison.
+appears in the film. Performance panels present the aggregate result
+and its 1 / 122 snapshot comparison.
 
 See [Architecture](../docs/ARCHITECTURE.md), [Algorithm](../docs/ALGORITHM.md)
 and [Results](../results/README.md) for the detailed explanation and numbers.
