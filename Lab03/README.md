@@ -27,12 +27,11 @@ One marble starts a chain reaction. The circuit does the bookkeeping.
 | Period × total cycles | 15,397.2 ns |
 | Area × period × total cycles | 2,420,609,209.2 |
 | Approximate comparison rank | **Rank 1 / 122** |
-| Objective reduction against the snapshot leader | **6.01%** |
 
 The comparison inserts this reported result into the 121 positive results in
 the 8 October 2026 snapshot. It is an approximate comparison rank, not an
 official course-assigned rank. The [results page](results/README.md) gives the
-formula and anonymous reference values.
+formula and performance record.
 
 ## Architecture walkthrough
 

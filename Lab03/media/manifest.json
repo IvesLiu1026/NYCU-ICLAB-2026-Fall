@@ -1,28 +1,68 @@
 {
   "schema": "iclab.selected-media.v1",
   "project": "Lab03",
-  "duration_seconds": 84,
+  "engine": "ManimGL",
+  "engine_project": "https://github.com/3b1b/manim",
+  "duration_seconds": 92.433333,
   "width": 1920,
   "height": 1080,
-  "fps": 24,
+  "fps": 30,
+  "frame_count": 2773,
   "audio": false,
   "scope": "Conceptual selected-architecture illustrations; synthetic cascade example, not a gate waveform.",
+  "chapters": [
+    {
+      "index": 1,
+      "title": "One marble. A whole chain.",
+      "start_seconds": 0
+    },
+    {
+      "index": 2,
+      "title": "Dense storage. Two parity banks.",
+      "start_seconds": 9.4
+    },
+    {
+      "index": 3,
+      "title": "Read ahead. Decide from registered flags.",
+      "start_seconds": 21.2
+    },
+    {
+      "index": 4,
+      "title": "A chain reaction follows one moving junction.",
+      "start_seconds": 36.8
+    },
+    {
+      "index": 5,
+      "title": "Count first. Then replay the output.",
+      "start_seconds": 55.6
+    },
+    {
+      "index": 6,
+      "title": "Compact the ring. Preserve its circular seam.",
+      "start_seconds": 70.8
+    },
+    {
+      "index": 7,
+      "title": "Local decisions. Shared hardware.",
+      "start_seconds": 83.233
+    }
+  ],
   "assets": {
     "zuma-architecture.mp4": {
-      "bytes": 1124520,
-      "sha256": "eb5a6c51130f3491f23bb0e118b8f95f7132d633709877ae96c9abd9e8e93308"
+      "bytes": 2527845,
+      "sha256": "9b99ad5f7def326e767ec663a7351a1ad7d6f26c04a8552daf8480299405bec6"
     },
     "zuma-poster.png": {
-      "bytes": 83066,
-      "sha256": "9c059bfa3f7f6076a31727f70fd67ddd218c2cf89e6044442b38309d829fd809"
+      "bytes": 353554,
+      "sha256": "c642b407928f91d0e54e5cb6055fe4f9f86b5b165b307e591186d0d0100d2fa1"
     },
     "zuma-preview.gif": {
-      "bytes": 314345,
-      "sha256": "1b0a0c7280c4f6d52938c3a35ba018921cd15d2c9df95b21cabda9aece383a56"
+      "bytes": 1139643,
+      "sha256": "52284ffcb0b7aeaa9249e5a04a5558ee92e96def5c462b4ff57f8605751c60f8"
     },
     "zuma-cascade.gif": {
-      "bytes": 241915,
-      "sha256": "87032cd0cd42d99707b764ae6067ba1302aa2f608cbd1ef5589137959eeccb03"
+      "bytes": 893339,
+      "sha256": "1ba42d5de162ebab7150527fec73e7ce3e2616935285fb3d625c3072710fc3b9"
     }
   }
 }

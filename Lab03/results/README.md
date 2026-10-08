@@ -1,4 +1,4 @@
-# Reported performance and Rank 1 comparison
+# Reported performance
 
 | Quantity | Reported benchmark |
 | --- | ---: |
@@ -16,26 +16,16 @@
 The performance point is recorded as a reported aggregate result. The cost is
 recomputed directly from its three inputs. Lower cost is better.
 
-## Anonymous reference comparison
+## Snapshot rank
 
 The fixed 8 October 2026 snapshot has 121 positive results. Inserting the
 reported benchmark produces 122 comparison entries and a first-place position.
 This is a comparison rank, not an official assigned course rank.
 
-| Result | Period | Area | Total cycles | Objective |
-| --- | ---: | ---: | ---: | ---: |
-| Reported benchmark | 2.8 ns | 157,211 µm² | 5,499 | 2.4206092092 × 10⁹ |
-| Snapshot leader | 2.9 ns | 155,442.7 µm² | 5,713 | 2.57532802079 × 10⁹ |
-
-The reported point has 1.14% more area, 3.75% fewer cycles and a 3.45% shorter
-period. Their product is **6.01% lower** than the reference objective. This
-comparison assumes the same total-latency counting convention. It does not
-infer the reference architecture or compare implementations' source code.
-
-![Objective comparison](figures/objective.png)
+![Reported performance](figures/objective.png)
 
 [SVG](figures/objective.svg) · [PDF](figures/objective.pdf) ·
-[Comparison data](comparison.csv) · [Machine-readable benchmark](benchmark.json)
+[Performance data](performance.csv) · [Machine-readable benchmark](benchmark.json)
 
 ## Interpretation
 

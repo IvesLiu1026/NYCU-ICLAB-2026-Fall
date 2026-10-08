@@ -15,13 +15,6 @@
     "existing_positive_results": 121,
     "total_including_result": 122,
     "official_course_rank": null,
-    "scope": "Approximate insertion comparison against the fixed snapshot.",
-    "reference": {
-      "period_ns": 2.9,
-      "area_um2": 155442.7,
-      "total_cycles": 5713,
-      "objective_decimal": "2575328020.79"
-    },
-    "objective_reduction_percent": 6.007732232204693
+    "scope": "Approximate insertion comparison against the fixed snapshot."
   }
 }
