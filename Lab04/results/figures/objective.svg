@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="729.18pt" height="281.16pt" viewBox="0 0 729.18 281.16" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 281.16
+L 729.18 281.16
+L 729.18 0
+L 0 0
+z
+" style="fill: #0b1020"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 29.79 154.9944
+L 227.88 154.9944
+Q 236.808 154.9944 236.808 146.124
+L 236.808 79.596
+Q 236.808 70.7256 227.88 70.7256
+L 29.79 70.7256
+Q 20.862 70.7256 20.862 79.596
+L 20.862 146.124
+Q 20.862 154.9944 29.79 154.9944
+z
+" clip-path="url(#pc75edd4aef)" style="fill: #152139; stroke: #59dde0; stroke-width: 1.4; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 264.15 154.9944
+L 462.24 154.9944
+Q 471.168 154.9944 471.168 146.124
+L 471.168 79.596
+Q 471.168 70.7256 462.24 70.7256
+L 264.15 70.7256
+Q 255.222 70.7256 255.222 79.596
+L 255.222 146.124
+Q 255.222 154.9944 264.15 154.9944
+z
+" clip-path="url(#pc75edd4aef)" style="fill: #152139; stroke: #ffcd72; stroke-width: 1.4; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 498.51 154.9944
+L 696.6 154.9944
+Q 705.528 154.9944 705.528 146.124
+L 705.528 79.596
+Q 705.528 70.7256 696.6 70.7256
+L 498.51 70.7256
+Q 489.582 70.7256 489.582 79.596
+L 489.582 146.124
+Q 489.582 154.9944 498.51 154.9944
+z
+" clip-path="url(#pc75edd4aef)" style="fill: #152139; stroke: #9ce6b0; stroke-width: 1.4; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 20px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #ebf2ff" x="27" y="40.788" transform="rotate(-0 27 40.788)">Selected candidate: measured values and qualification</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 24px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #59dde0" x="128.835" y="102.8808" transform="rotate(-0 128.835 102.8808)">12.5 ns</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="128.835" y="128.9376" transform="rotate(-0 128.835 128.9376)">clock period</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 24px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #ffcd72" x="363.195" y="102.8808" transform="rotate(-0 363.195 102.8808)">2,161,801</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="363.195" y="128.9376" transform="rotate(-0 363.195 128.9376)">cell-area report units</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 24px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #9ce6b0" x="597.555" y="102.8808" transform="rotate(-0 597.555 102.8808)">1 cycle</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="597.555" y="128.9376" transform="rotate(-0 597.555 128.9376)">wait after input</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 16px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #ebf2ff" x="364.59" y="183.8232" transform="rotate(-0 364.59 183.8232)">Area² × 1,000 counted wait cycles × period = 5.841728 × 10¹⁶</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="364.59" y="216.5328" transform="rotate(-0 364.59 216.5328)">1,000 functional gate frames completed · synthesis report checks pass</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #ff8c91" x="364.59" y="245.916" transform="rotate(-0 364.59 245.916)">Strict SDF qualification remains open — candidate cost only</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pc75edd4aef">
+   <rect x="15.84" y="15.84" width="697.5" height="249.48"/>
+  </clipPath>
+ </defs>
+</svg>

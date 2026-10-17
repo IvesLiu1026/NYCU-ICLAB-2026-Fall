@@ -1,0 +1,74 @@
+{
+  "schema": "iclab.selected-media.v1",
+  "project": "Lab04",
+  "engine": "ManimGL",
+  "engine_project": "https://github.com/3b1b/manim",
+  "duration_seconds": 90.9,
+  "width": 1920,
+  "height": 1080,
+  "fps": 30,
+  "frame_count": 2727,
+  "audio": false,
+  "chapters": [
+    {
+      "index": 1,
+      "title": "FlashAttention. Work starts before input ends.",
+      "start_seconds": 0
+    },
+    {
+      "index": 2,
+      "title": "One wait cycle sits between two long streams.",
+      "start_seconds": 8.533
+    },
+    {
+      "index": 3,
+      "title": "Rotate the storage past a small set of taps.",
+      "start_seconds": 18.933
+    },
+    {
+      "index": 4,
+      "title": "Interleave contexts through five three-stage engines.",
+      "start_seconds": 29.7
+    },
+    {
+      "index": 5,
+      "title": "Change the scale. Preserve the normalized ratio.",
+      "start_seconds": 41.3
+    },
+    {
+      "index": 6,
+      "title": "Merge the late key without replaying the prefix.",
+      "start_seconds": 60.067
+    },
+    {
+      "index": 7,
+      "title": "Two heads become four projected output words.",
+      "start_seconds": 72.4
+    },
+    {
+      "index": 8,
+      "title": "Architecture explained. Measurement kept in scope.",
+      "start_seconds": 82.433
+    }
+  ],
+  "scope": "Conceptual selected architecture; original four-key real-arithmetic example, not an RTL or gate waveform.",
+  "qualification": "Finite functional candidate; strict SDF timing qualification open.",
+  "assets": {
+    "attention-architecture.mp4": {
+      "bytes": 2625736,
+      "sha256": "4009aab41b9989dd9ec88c4dbce605deaee9e43345be348abc485cef2646ff81"
+    },
+    "attention-poster.png": {
+      "bytes": 365366,
+      "sha256": "249119bdd9eaf96cc7edc27554f9fbcdfd17546958da520923dee939404a9706"
+    },
+    "attention-preview.gif": {
+      "bytes": 1580857,
+      "sha256": "4820954af256adeb98e6ca62ceaee56678885f8c37a5a758fcea8c5c1ec05fb9"
+    },
+    "attention-update.gif": {
+      "bytes": 712765,
+      "sha256": "8a8addc00ee48750fb202299c9fd6cc38bf933e9e5adc2bcdc238e01877404c8"
+    }
+  }
+}

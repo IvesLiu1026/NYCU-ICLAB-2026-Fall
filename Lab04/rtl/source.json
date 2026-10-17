@@ -1,0 +1,19 @@
+{
+  "schema": "iclab.selected-source.v1",
+  "project": "Lab04",
+  "rtl_file": "F_ATTN.v",
+  "language": "Verilog-2005",
+  "source_sha256": "bb69233da48c3177df64186106e79aa072a859d18c23632033c720dc9487cb33",
+  "measured_source_sha256": "53a9127d326a5ed32be485737170a4bc155a533503abba94b60d607780c911cc",
+  "publication_change": "Comments and trailing whitespace removed; executable tokens and module names preserved.",
+  "executable_text_sha256": "033239f42edc432749cb7f0943ea357736c8548f18d9ed275f1028515cea3618",
+  "architecture": "Five three-stage attention engines, rotating K/V storage and shared projection",
+  "tokens": 16,
+  "dimensions": 4,
+  "heads": 2,
+  "dimensions_per_head": 2,
+  "engine_count": 5,
+  "engine_stages": 3,
+  "physical_state_slots": 22,
+  "ring_positions_per_component": 17
+}
