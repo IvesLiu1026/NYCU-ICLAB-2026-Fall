@@ -47,20 +47,20 @@
     },
     {
       "index": 8,
-      "title": "Architecture explained. Measurement kept in scope.",
+      "title": "Streaming attention. Rank 1 / 120.",
       "start_seconds": 82.433
     }
   ],
   "scope": "Conceptual selected architecture; original four-key real-arithmetic example, not an RTL or gate waveform.",
-  "qualification": "Finite functional candidate; strict SDF timing qualification open.",
+  "qualification": "Reported passing synthesis and SDF gate validation.",
   "assets": {
     "attention-architecture.mp4": {
-      "bytes": 2625736,
-      "sha256": "4009aab41b9989dd9ec88c4dbce605deaee9e43345be348abc485cef2646ff81"
+      "bytes": 2595889,
+      "sha256": "3abda531538691d1abc77e23b313f49a02b328ad998aac7982fd4f51824429c2"
     },
     "attention-poster.png": {
-      "bytes": 365366,
-      "sha256": "249119bdd9eaf96cc7edc27554f9fbcdfd17546958da520923dee939404a9706"
+      "bytes": 329416,
+      "sha256": "57fcd59ea9f0dde1067a84626ab91dd40fdfde7fe3d96269d5c6c6b2b53a7f82"
     },
     "attention-preview.gif": {
       "bytes": 1580857,

@@ -106,4 +106,4 @@ sum, extracts a fixed-point magnitude and uses an external integer-to-float
 converter. Four projected words per row produce 64 consecutive outputs.
 
 See [protocol](PROTOCOL.md) for timing and [evaluation](EVALUATION.md) for
-the measured candidate's remaining qualification work.
+the selected result and reported validation.

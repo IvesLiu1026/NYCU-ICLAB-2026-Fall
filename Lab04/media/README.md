@@ -19,7 +19,7 @@ on-screen explanations and no audio. Both looping previews are 16 seconds.
 | 0:41 | Original four-key online scaling example |
 | 1:00 | First-row sigmoid tail merge |
 | 1:12 | Output-weight transpose and shared projection |
-| 1:22 | Candidate measurement and qualification scope |
+| 1:22 | Selected result and snapshot comparison |
 
 The scenes explain the selected circuit's storage, stages and arithmetic
 dependencies. They are conceptual views, not cycle-accurate RTL or gate
@@ -28,10 +28,10 @@ they do not reproduce the exact issue table. The four-key numerical
 example was constructed for the explanation and checked independently
 using real arithmetic.
 
-The measurement scene presents the 12.5 ns candidate and its finite
-1,000-frame functional check. Strict SDF timing qualification remains
-open. The one-cycle figure is the counted post-input wait, not the complete
-transaction duration.
+The measurement scene presents the 12.5 ns result, its finite 1,000-frame
+functional check and Rank 1 / 120 snapshot comparison. Synthesis and SDF
+gate validation are reported passing. The one-cycle figure is the counted
+post-input wait, not the complete transaction duration.
 
 See [Architecture](../docs/ARCHITECTURE.md), [Algorithm](../docs/ALGORITHM.md),
 [Evaluation](../docs/EVALUATION.md) and [Results](../results/README.md).

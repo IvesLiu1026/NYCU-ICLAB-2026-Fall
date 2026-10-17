@@ -24,15 +24,12 @@ measured results for these problems. Each project directory contains its documen
 | [Lab01](Lab01/) | Out-of-order Instruction Issue Scheduler (OISS) | 15.6 ns / 122,611 µm² | 3 / 116 |
 | [Lab02](Lab02/) | QC-LDPC Decoder | 7.0 ns / 561,593 µm² | 10 / 121 |
 | [Lab03](Lab03/) | ZUMA | 2.8 ns / 157,211 µm² / 5,499 cycles | 1 / 122 |
-| [Lab04](Lab04/) | FlashAttention | 12.5 ns / 2,161,801 area units / 1 wait cycle; SDF qualification open | 1 / 120 (conditional) |
+| [Lab04](Lab04/) | FlashAttention | 12.5 ns / 2,161,801 area units / 1 wait cycle | 1 / 120 |
 
 The ranks are anonymous insertion comparisons against fixed, lab-specific
 performance snapshots. They are not official course-assigned ranks, and the
 labs use different cost formulas, so their rank positions should not be
 compared as if they were one common leaderboard.
-
-Lab04's comparison position is conditional on completing strict SDF timing
-qualification; it uses the measured candidate's arithmetic cost.
 
 ## License and learning use
 

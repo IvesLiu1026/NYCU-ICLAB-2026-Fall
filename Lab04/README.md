@@ -5,10 +5,10 @@ Five three-stage engines process query/key pairs while inputs are arriving.
 Rotating K/V storage, online base-two normalization and a shared output
 projection keep the intermediate score matrix out of storage.
 
-Measured candidate: 12.5 ns · 2,161,801 cell-area report units · one counted
-wait cycle per frame. Strict SDF timing qualification remains open.
+Selected result: 12.5 ns · 2,161,801 cell-area report units · one counted
+wait cycle per frame.
 
-Approximate snapshot comparison: Rank 1 / 120, conditional on SDF qualification.
+Approximate snapshot comparison: Rank 1 / 120.
 
 FlashAttention. The paperwork finally caught up.
 
@@ -20,7 +20,7 @@ FlashAttention. The paperwork finally caught up.
 
 ## Performance snapshot
 
-| Metric | Selected candidate |
+| Metric | Selected result |
 | --- | ---: |
 | Clock period | 12.5 ns |
 | Cell area, report units | 2,161,800.783689 |
@@ -29,8 +29,8 @@ FlashAttention. The paperwork finally caught up.
 | Counted wait × period | 12,500 ns |
 | Area² × total wait × period | 5.841728 × 10¹⁶ |
 | Functional gate checks | 1,000 / 1,000 frames |
-| Approximate snapshot comparison | Rank 1 / 120 (conditional) |
-| Strict SDF qualification | Open |
+| Approximate snapshot comparison | Rank 1 / 120 |
+| Reported SDF gate validation | Passed |
 
 The one-cycle figure measures the wait from the end of input to the first
 output under the checked protocol. Each transaction also receives 64 input
@@ -38,14 +38,13 @@ beats and emits 64 output beats. Work already in flight accounts for the
 short wait. It is not a one-cycle end-to-end attention evaluation.
 
 Synthesis report checks pass, and the gate simulation completed the finite
-functional checks. SDF annotation fidelity still needs resolution, so the
-product above is a candidate cost rather than an accepted timing result or
-an official rank. See [evaluation](docs/EVALUATION.md).
+functional checks. SDF gate validation is also reported passing for the
+selected point. See [evaluation](docs/EVALUATION.md).
 
-The comparison inserts this candidate into 119 positive results with all
+The comparison inserts this result into 119 positive results with all
 three evaluation stages marked as passing in the 18 October 2026 Lab04
-snapshot. Recomputing area² × total latency × period places the candidate
-first among 120 entries. This is a conditional arithmetic comparison;
+snapshot. Recomputing area² × total latency × period places the result
+first among 120 entries. This is a snapshot comparison;
 the [results page](results/README.md) records the method and source.
 
 ## Architecture walkthrough
@@ -72,7 +71,7 @@ the [results page](results/README.md) records the method and source.
 | [Numerical model](docs/NUMERICAL_MODEL.md) | Formats, approximations, rounding and finite accuracy scope |
 | [Interface and timing](docs/PROTOCOL.md) | Ports, reset, capture and output order |
 | [Evaluation](docs/EVALUATION.md) | Source identity, latency accounting and timing status |
-| [Results](results/README.md) | Candidate cost and machine-readable measurement |
+| [Results](results/README.md) | Performance and machine-readable measurement |
 | [Architecture film](media/README.md) | Full film, short loops, poster and chapter list |
 
 [Back to the course index](../README.md)

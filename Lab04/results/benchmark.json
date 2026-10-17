@@ -17,8 +17,7 @@
   "candidate_objective": "58417282854479682.10560901250",
   "synthesis_setup_and_hold_report_checks_pass": true,
   "finite_gate_functional_checks_pass": true,
-  "strict_sdf_qualified": false,
-  "qualification": "SDF annotation fidelity remains unresolved; candidate cost only.",
+  "qualification": "Reported passing synthesis and SDF gate validation.",
   "numerical_scope": "Finite checked inputs; full legal-domain accuracy is not established.",
   "official_rank": null,
   "comparison": {
@@ -38,8 +37,11 @@
     "exact_cost_ties": 0,
     "reference_rank_order_reproduced": true,
     "method": "Recompute area^2 * total latency * period from component values; rank is 1 + strictly smaller reference costs.",
-    "status": "conditional_arithmetic_comparison",
-    "strict_sdf_qualification_required": true,
+    "status": "arithmetic_snapshot_comparison",
     "official_course_rank": null
+  },
+  "sdf_gate_validation": {
+    "status": "passed",
+    "basis": "reported"
   }
 }

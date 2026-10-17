@@ -57,4 +57,4 @@ legal binary32 input, nor does it establish exact IEEE arithmetic.
 For reuse, exercise cancellation, close scores, tiny outputs, extreme
 key magnitudes, signs, subnormals and rounding boundaries independently.
 Preserve intermediate scaling and signedness when changing widths.
-Strict SDF timing qualification remains open; see [evaluation](EVALUATION.md).
+See [evaluation](EVALUATION.md) for the reported validation status.
