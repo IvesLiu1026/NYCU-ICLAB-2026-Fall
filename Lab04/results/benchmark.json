@@ -20,5 +20,26 @@
   "strict_sdf_qualified": false,
   "qualification": "SDF annotation fidelity remains unresolved; candidate cost only.",
   "numerical_scope": "Finite checked inputs; full legal-domain accuracy is not established.",
-  "official_rank": null
+  "official_rank": null,
+  "comparison": {
+    "schema": "iclab.snapshot-comparison.v1",
+    "snapshot_date": "2026-10-18",
+    "snapshot_read_utc": "2026-10-17T18:51:27+00:00",
+    "snapshot_timezone": "Asia/Taipei",
+    "source_url": "https://docs.google.com/spreadsheets/d/16rjaQ8dw61-fahOhnfgNhu66pdOijwfEi53SUIfHgw4/edit?gid=539933943#gid=539933943",
+    "sheet_name": "Lab04",
+    "sheet_id": 539933943,
+    "positive_completed_reference_results": 119,
+    "excluded_populated_rows": 1,
+    "candidate_entries": 1,
+    "total_including_candidate": 120,
+    "rank": 1,
+    "reference_results_with_smaller_cost": 0,
+    "exact_cost_ties": 0,
+    "reference_rank_order_reproduced": true,
+    "method": "Recompute area^2 * total latency * period from component values; rank is 1 + strictly smaller reference costs.",
+    "status": "conditional_arithmetic_comparison",
+    "strict_sdf_qualification_required": true,
+    "official_course_rank": null
+  }
 }

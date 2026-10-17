@@ -1,2 +1,2 @@
-period_ns,cell_area_report_units,frames,wait_cycles_per_frame,total_wait_cycles,candidate_objective,strict_sdf_qualified
-12.5,2161800.783689,1000,1,1000,58417282854479682.10560901250,false
+period_ns,cell_area_report_units,frames,wait_cycles_per_frame,total_wait_cycles,candidate_objective,strict_sdf_qualified,snapshot_comparison_rank,snapshot_comparison_entries,snapshot_date,rank_status
+12.5,2161800.783689,1000,1,1000,58417282854479682.10560901250,false,1,120,2026-10-18,conditional

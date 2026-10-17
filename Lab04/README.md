@@ -8,6 +8,8 @@ projection keep the intermediate score matrix out of storage.
 Measured candidate: 12.5 ns · 2,161,801 cell-area report units · one counted
 wait cycle per frame. Strict SDF timing qualification remains open.
 
+Approximate snapshot comparison: Rank 1 / 120, conditional on SDF qualification.
+
 FlashAttention. The paperwork finally caught up.
 
 [![FlashAttention architecture preview](media/attention-preview.gif)](media/attention-architecture.mp4)
@@ -27,6 +29,7 @@ FlashAttention. The paperwork finally caught up.
 | Counted wait × period | 12,500 ns |
 | Area² × total wait × period | 5.841728 × 10¹⁶ |
 | Functional gate checks | 1,000 / 1,000 frames |
+| Approximate snapshot comparison | Rank 1 / 120 (conditional) |
 | Strict SDF qualification | Open |
 
 The one-cycle figure measures the wait from the end of input to the first
@@ -38,6 +41,12 @@ Synthesis report checks pass, and the gate simulation completed the finite
 functional checks. SDF annotation fidelity still needs resolution, so the
 product above is a candidate cost rather than an accepted timing result or
 an official rank. See [evaluation](docs/EVALUATION.md).
+
+The comparison inserts this candidate into 119 positive results with all
+three evaluation stages marked as passing in the 18 October 2026 Lab04
+snapshot. Recomputing area² × total latency × period places the candidate
+first among 120 entries. This is a conditional arithmetic comparison;
+the [results page](results/README.md) records the method and source.
 
 ## Architecture walkthrough
 
