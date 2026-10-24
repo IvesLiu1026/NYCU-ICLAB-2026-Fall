@@ -25,7 +25,7 @@ measured results for these problems. Each project directory contains its documen
 | [Lab02](Lab02/) | QC-LDPC Decoder | 7.0 ns / 561,593 µm² | 10 / 121 |
 | [Lab03](Lab03/) | ZUMA | 2.8 ns / 157,211 µm² / 5,499 cycles | 1 / 122 |
 | [Lab04](Lab04/) | FlashAttention | 12.5 ns / 2,161,801 area units / 1 wait cycle | 1 / 120 |
-| [Lab05](Lab05/) | JPEG-like Encoder (JPEGLENC) | Write-up pending decompression | — |
+| [Lab05](Lab05/) | JPEG-like Encoder (JPEGLENC) | 2.3 ns / 833,817 area units / 370,662 cycles | 1 / 118 |
 
 The ranks are anonymous insertion comparisons against fixed, lab-specific
 performance snapshots. They are not official course-assigned ranks, and the

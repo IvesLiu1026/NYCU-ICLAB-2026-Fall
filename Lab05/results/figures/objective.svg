@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="757.08pt" height="308.88pt" viewBox="0 0 757.08 308.88" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 308.88
+L 757.08 308.88
+L 757.08 0
+L 0 0
+z
+" style="fill: #0b1020"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 38.16 158.3208
+L 244.62 158.3208
+Q 251.316 158.3208 251.316 151.668
+L 251.316 85.14
+Q 251.316 78.4872 244.62 78.4872
+L 38.16 78.4872
+Q 31.464 78.4872 31.464 85.14
+L 31.464 151.668
+Q 31.464 158.3208 38.16 158.3208
+z
+" clip-path="url(#pe7e7c6b495)" style="fill: #152139; stroke: #59dde0; stroke-width: 1.5; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 275.31 158.3208
+L 481.77 158.3208
+Q 488.466 158.3208 488.466 151.668
+L 488.466 85.14
+Q 488.466 78.4872 481.77 78.4872
+L 275.31 78.4872
+Q 268.614 78.4872 268.614 85.14
+L 268.614 151.668
+Q 268.614 158.3208 275.31 158.3208
+z
+" clip-path="url(#pe7e7c6b495)" style="fill: #152139; stroke: #ffcd72; stroke-width: 1.5; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 512.46 158.3208
+L 718.92 158.3208
+Q 725.616 158.3208 725.616 151.668
+L 725.616 85.14
+Q 725.616 78.4872 718.92 78.4872
+L 512.46 78.4872
+Q 505.764 78.4872 505.764 85.14
+L 505.764 151.668
+Q 505.764 158.3208 512.46 158.3208
+z
+" clip-path="url(#pe7e7c6b495)" style="fill: #152139; stroke: #9ce6b0; stroke-width: 1.5; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 20px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #ebf2ff" x="32.58" y="43.56" transform="rotate(-0 32.58 43.56)">Selected point: timing met, matching SDF gate checks passed</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 25px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #59dde0" x="141.39" y="111.1968" transform="rotate(-0 141.39 111.1968)">2.3 ns</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="141.39" y="135.036" transform="rotate(-0 141.39 135.036)">main clock</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 25px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #ffcd72" x="378.54" y="111.1968" transform="rotate(-0 378.54 111.1968)">833,817</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="378.54" y="135.036" transform="rotate(-0 378.54 135.036)">cell-area report units</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 25px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #9ce6b0" x="615.69" y="111.1968" transform="rotate(-0 615.69 111.1968)">370,662</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="615.69" y="135.036" transform="rotate(-0 615.69 135.036)">counted cycles / 100 images</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 18px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #ebf2ff" x="378.54" y="186.5952" transform="rotate(-0 378.54 186.5952)">Area² × 370,662 cycles × 2.3 ns = 5.927171 × 10¹⁷</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 13px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="378.54" y="226.512" transform="rotate(-0 378.54 226.512)">100 / 100 images · 365,418 output bytes · native RTL + matching SDF gate</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 16px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #baacff" x="378.54" y="265.32" transform="rotate(-0 378.54 265.32)">Rank 1 / 118 in the 25 October 2026 snapshot comparison</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pe7e7c6b495">
+   <rect x="15.84" y="15.84" width="725.4" height="277.2"/>
+  </clipPath>
+ </defs>
+</svg>

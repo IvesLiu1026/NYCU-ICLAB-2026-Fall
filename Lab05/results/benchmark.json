@@ -1,0 +1,32 @@
+{
+  "schema": "iclab.performance.v1",
+  "project": "Lab05",
+  "status": "qualified_selected_result",
+  "period_ns": 2.3,
+  "cell_area_report_units": "833817.074646",
+  "total_cycles": 370662,
+  "checked_images": 100,
+  "checked_input_pixels": 1638400,
+  "checked_output_bytes": 365418,
+  "latency_times_period_ns": "852522.6",
+  "objective_formula": "cell_area^2 * total_cycles * period_ns",
+  "objective_decimal": "592717116831114947.8784560621416",
+  "qualification": {
+    "rtl": "passed",
+    "synthesis_timing": "met",
+    "matching_sdf_gate": "passed",
+    "scope": "Selected 2.3 ns implementation on the supplied 100-image corpus."
+  },
+  "comparison": {
+    "rank": 1,
+    "label": "1 / 118",
+    "snapshot_date": "2026-10-25",
+    "existing_positive_passing_results": 117,
+    "total_including_result": 118,
+    "first_demo_results": 101,
+    "second_demo_results": 16,
+    "official_course_rank": null,
+    "source_url": "https://docs.google.com/spreadsheets/d/16rjaQ8dw61-fahOhnfgNhu66pdOijwfEi53SUIfHgw4/edit?gid=25877961",
+    "scope": "Insertion comparison against the fixed snapshot; both demo groups use the same cost formula."
+  }
+}

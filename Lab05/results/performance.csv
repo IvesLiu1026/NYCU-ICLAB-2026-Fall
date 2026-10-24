@@ -1,0 +1,10 @@
+metric,value,unit
+clock_period,2.3,ns
+cell_area,833817.074646,report units
+total_latency,370662,cycles
+checked_images,100,images
+checked_output_bytes,365418,bytes
+latency_times_period,852522.6,ns
+objective,592717116831114947.8784560621416,area_squared_times_ns
+comparison_rank,1,position
+comparison_entries,118,entries

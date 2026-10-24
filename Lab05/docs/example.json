@@ -1,0 +1,9 @@
+{
+  "scope": "Synthetic arithmetic illustration; not a test-vector export",
+  "accumulator": -917504,
+  "normalization_shift": 18,
+  "normalized": -4,
+  "quantization_shift": 3,
+  "quantized": -1,
+  "single_combined_rounding": 0
+}

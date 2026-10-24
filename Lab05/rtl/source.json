@@ -1,0 +1,16 @@
+{
+  "schema": "iclab.selected-source.v1",
+  "project": "Lab05",
+  "rtl_file": "JPEGLENC.v",
+  "source_sha256": "68d5fe5eba1f68867edb5aee041480352836beb580d902862e72ceb3ca46b6ba",
+  "language": "Verilog-2001",
+  "architecture": "Streaming integer DCT and entropy encoder with a shared single-port memory",
+  "image_width": 128,
+  "image_height": 128,
+  "memory_words": 1360,
+  "memory_word_bits": 64,
+  "external_module": "SU_1360X64_b8_m1",
+  "measured_source_relation": "Comments and whitespace only; executable source unchanged",
+  "annotated_sha256": "ae87ddf4a85f5090701e0a1fa4e369b86f7ca6a640f46741a8be9821eb35d683",
+  "reading_note_blocks": 26
+}

@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="757.08pt" height="336.6pt" viewBox="0 0 757.08 336.6" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 336.6
+L 757.08 336.6
+L 757.08 0
+L 0 0
+z
+" style="fill: #0b1020"/>
+  </g>
+  <g id="axes_1">
+   <g id="line2d_1">
+    <path d="M 164.806071 115.134462
+L 229.573929 115.134462
+L 229.573929 137.026154
+L 294.341786 137.026154
+L 294.341786 115.134462
+L 359.109643 115.134462
+L 359.109643 137.026154
+L 423.8775 137.026154
+L 423.8775 115.134462
+L 488.645357 115.134462
+L 488.645357 137.026154
+L 553.413214 137.026154
+L 553.413214 115.134462
+L 618.181071 115.134462
+L 618.181071 137.026154
+L 682.948929 137.026154
+L 682.948929 115.134462
+L 747.716786 115.134462
+L 747.716786 137.026154
+L 758.08 137.026154
+" clip-path="url(#p0f01488d0d)" style="fill: none; stroke: #59dde0; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 164.806071 207.392308
+L 229.573929 207.392308
+L 229.573929 207.392308
+L 294.341786 207.392308
+L 294.341786 207.392308
+L 359.109643 207.392308
+L 359.109643 185.500615
+L 423.8775 185.500615
+L 423.8775 185.500615
+L 488.645357 185.500615
+L 488.645357 207.392308
+L 553.413214 207.392308
+L 553.413214 207.392308
+L 618.181071 207.392308
+L 618.181071 185.500615
+L 682.948929 185.500615
+L 682.948929 185.500615
+L 747.716786 185.500615
+L 747.716786 207.392308
+L 758.08 207.392308
+" clip-path="url(#p0f01488d0d)" style="fill: none; stroke: #ffcd72; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 164.806071 242.575385
+L 164.806071 97.933846
+" clip-path="url(#p0f01488d0d)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #59dde0; stroke-opacity: 0.5; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_4">
+    <path d="M 359.109643 242.575385
+L 359.109643 97.933846
+" clip-path="url(#p0f01488d0d)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #ffcd72; stroke-opacity: 0.5; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_5">
+    <path d="M 682.948929 242.575385
+L 682.948929 97.933846
+" clip-path="url(#p0f01488d0d)" style="fill: none; stroke-dasharray: 5.55,2.4; stroke-dashoffset: 0; stroke: #9ce6b0; stroke-opacity: 0.5; stroke-width: 1.5"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 20px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #ebf2ff" x="41.747143" y="43.204615" transform="rotate(-0 41.747143 43.204615)">A read crosses a registered memory interface</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #95a6c3" x="41.747143" y="70.569231" transform="rotate(-0 41.747143 70.569231)">Relative main-clock cycles · conceptual phase view</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #59dde0" x="41.747143" y="127.644" transform="rotate(-0 41.747143 127.644)">main clock</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #ffcd72" x="41.747143" y="198.010154" transform="rotate(-0 41.747143 198.010154)">memory clock</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; fill: #59dde0" transform="translate(149.651853 252.827761)">slot g</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; fill: #59dde0" transform="translate(113.16365 266.030769)">address + controls</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; fill: #ffcd72" transform="translate(312.282299 272.373915)">memory CK rises</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; fill: #ffcd72" transform="translate(306.344877 285.576923)">falling edge of g+1</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; fill: #9ce6b0" transform="translate(647.762679 252.827761)">capture read</text>
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; fill: #9ce6b0" transform="translate(631.8926 266.030769)">rising edge of g+4</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #95a6c3" x="385.016786" y="309.032308" transform="rotate(-0 385.016786 309.032308)">The capture depends on the compatible macro’s access and output-hold timing.</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p0f01488d0d">
+   <rect x="15.84" y="15.84" width="725.4" height="304.92"/>
+  </clipPath>
+ </defs>
+</svg>
